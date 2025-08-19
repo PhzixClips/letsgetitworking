@@ -199,6 +199,16 @@ class SettingsWindow(tk.Toplevel):
             ttk.Entry(weights_frame, textvariable=self.vars['viral_score_weights'][key], width=10).grid(row=row, column=1, sticky='w', padx=5)
             row += 1
 
+        ttk.Separator(frame, orient='horizontal').grid(row=row+4, column=0, columnspan=3, sticky='ew', pady=15)
+
+        # Audio Download Settings
+        ttk.Label(frame, text="Preferred Audio Format:", font=("Segoe UI", 10, "bold")).grid(row=row+5, column=0, sticky='w', pady=10)
+        self.vars['preferred_audio_format'] = tk.StringVar()
+        audio_format_combo = ttk.Combobox(frame, textvariable=self.vars['preferred_audio_format'],
+                                   values=["m4a", "mp3", "wav"], state="readonly")
+        audio_format_combo.grid(row=row+5, column=1, sticky='ew', padx=5)
+
+
         return frame
 
     def _update_version_labels(self):
@@ -245,6 +255,7 @@ class SettingsWindow(tk.Toplevel):
         # Search & Analysis
         self.vars['max_api_calls'].set(self.settings.get('max_api_calls'))
         self.vars['default_search_count'].set(self.settings.get('default_search_count'))
+        self.vars['preferred_audio_format'].set(self.settings.get('preferred_audio_format', 'm4a'))
         for key, var in self.vars['viral_score_weights'].items():
             var.set(self.settings.get('viral_score_weights', {}).get(key))
 
@@ -274,8 +285,15 @@ class SettingsWindow(tk.Toplevel):
             # Search & Analysis
             settings_manager.set('max_api_calls', self.vars['max_api_calls'].get())
             settings_manager.set('default_search_count', self.vars['default_search_count'].get())
+            settings_manager.set('preferred_audio_format', self.vars['preferred_audio_format'].get())
             viral_weights = {key: var.get() for key, var in self.vars['viral_score_weights'].items()}
             settings_manager.set('viral_score_weights', viral_weights)
+
+            # Library
+            settings_manager.set('save_default_folder', self.vars['save_default_folder'].get())
+            settings_manager.set('save_remember_last_folder', self.vars['save_remember_last_folder'].get())
+            settings_manager.set('save_auto_download_transcript', self.vars['save_auto_download_transcript'].get())
+            settings_manager.set('save_auto_open_prompt_builder', self.vars['save_auto_open_prompt_builder'].get())
 
             messagebox.showinfo("Settings Saved", "Settings have been saved. Some changes may require a restart to take full effect.", parent=self)
             self.destroy()
@@ -316,35 +334,3 @@ class SettingsWindow(tk.Toplevel):
         ttk.Checkbutton(frame, text="Auto-open Prompt Builder after save", variable=self.vars['save_auto_open_prompt_builder']).grid(row=4, column=0, columnspan=2, sticky='w', pady=5)
 
         return frame
-
-    def _save_and_close(self):
-        try:
-            # Appearance
-            settings_manager.set('theme_name', self.vars['theme_name'].get())
-            settings_manager.set('ui_scale', self.vars['ui_scale'].get())
-            font_sizes = {key: var.get() for key, var in self.vars['font_sizes'].items()}
-            settings_manager.set('font_sizes', font_sizes)
-
-            # Paths & API
-            api_keys = self.api_keys_text.get('1.0', tk.END).strip().split('\n')
-            settings_manager.set('api_keys', [key for key in api_keys if key])
-            settings_manager.set('yt_dlp_path', self.vars['yt_dlp_path'].get())
-            settings_manager.set('ffmpeg_path', self.vars['ffmpeg_path'].get())
-            settings_manager.set('cliphustle_base_path', self.vars['cliphustle_base_path'].get())
-
-            # Search & Analysis
-            settings_manager.set('max_api_calls', self.vars['max_api_calls'].get())
-            settings_manager.set('default_search_count', self.vars['default_search_count'].get())
-            viral_weights = {key: var.get() for key, var in self.vars['viral_score_weights'].items()}
-            settings_manager.set('viral_score_weights', viral_weights)
-
-            # Library
-            settings_manager.set('save_default_folder', self.vars['save_default_folder'].get())
-            settings_manager.set('save_remember_last_folder', self.vars['save_remember_last_folder'].get())
-            settings_manager.set('save_auto_download_transcript', self.vars['save_auto_download_transcript'].get())
-            settings_manager.set('save_auto_open_prompt_builder', self.vars['save_auto_open_prompt_builder'].get())
-
-            messagebox.showinfo("Settings Saved", "Settings have been saved. Some changes may require a restart to take full effect.", parent=self)
-            self.destroy()
-        except Exception as e:
-            messagebox.showerror("Error Saving", f"An error occurred while saving settings: {e}", parent=self)

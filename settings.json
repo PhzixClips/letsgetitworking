@@ -6,9 +6,6 @@
         "AIzaSyCBlmnUspk4fp6nT81gJbcSz6SnMwPSkmQ"
     ],
     "yt_dlp_path": "C:\\yt-dlp\\yt-dlp.exe",
-    "yt_dlp_auto_update": true,
-    "yt_dlp_current_version": "",
-    "yt_dlp_last_update_check": "",
     "ffmpeg_path": "ffmpeg",
     "log_path": "/home/jules/OneDrive/Desktop/upgrade_log.txt",
     "audio_clips_path": "/home/jules/OneDrive/Desktop/audio_clips",
@@ -54,11 +51,15 @@
         "#mustwatch",
         "#explore"
     ],
+    "preferred_audio_format": "m4a",
     "window_geometry": "1200x700",
     "save_default_folder": "Default",
     "save_auto_open_prompt_builder": false,
     "save_auto_download_transcript": false,
     "save_remember_last_folder": true,
-    "preview_in_webview": true,
-    "save_last_used_folder": "Default"
+    "save_last_used_folder": "Default",
+    "yt_dlp_auto_update": true,
+    "yt_dlp_current_version": "",
+    "yt_dlp_last_update_check": "",
+    "preview_in_webview": true
 }

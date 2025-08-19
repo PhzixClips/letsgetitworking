@@ -5,10 +5,13 @@ Media processing for video downloads, transcription, and frame extraction
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict
+
 import whisper
 from config import YT_DLP_PATH, FFMPEG_PATH, FRAMES_DIR_NAME, AUDIO_FILE_NAME, AUDIO_CLIPS_PATH
 from utils.logging import log_upgrade
+from core.yt_dlp_helper import download_audio_from_url, DownloadResult
+from data.settings_manager import settings_manager
 
 class MediaProcessor:
     """Handles video downloads, audio extraction, and transcription"""
@@ -149,39 +152,36 @@ class MediaProcessor:
             log_upgrade(f"Error extracting audio: {e}")
             return False
 
-    def download_audio_only(self, video_id: str, url: str,
-                           output_path: Path) -> Optional[Path]:
-        """Download audio only using yt-dlp"""
+    def download_audio(self,
+                       url: str,
+                       output_path: Path,
+                       *,
+                       cookies_path: Optional[str] = None,
+                       ui_callbacks: Optional[Dict[str, callable]] = None) -> DownloadResult:
+        """
+        Downloads audio from a URL using the centralized yt-dlp helper.
+        This is the new, robust implementation.
+        """
         try:
             output_path.mkdir(parents=True, exist_ok=True)
-            audio_file = output_path / f"{video_id}_audio.wav"
+            preferred_ext = settings_manager.get('preferred_audio_format', 'm4a')
 
-            cmd = [
-                YT_DLP_PATH,
-                '-x',  # Extract audio only
-                '--audio-format', 'wav',
-                '--audio-quality', '0',  # Best quality
-                '--no-mtime',
-                '-o', str(output_path / f"{video_id}_audio.%(ext)s"),
-                url
-            ]
-
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True
+            # The actual download logic is now delegated to the helper
+            result = download_audio_from_url(
+                url=url,
+                cookies_path=cookies_path,
+                outdir=str(output_path),
+                preferred_ext=preferred_ext,
+                ui_callbacks=ui_callbacks
             )
 
-            if result.returncode == 0 and audio_file.exists():
-                return audio_file
-            else:
-                log_upgrade(f"Audio download failed: {result.stderr}")
-                return None
+            if not result.success:
+                log_upgrade(f"Audio download failed: {result.error}")
 
+            return result
         except Exception as e:
-            log_upgrade(f"Error downloading audio: {e}")
-            return None
+            log_upgrade(f"Error preparing audio download: {e}")
+            return DownloadResult(success=False, filepath=None, error=str(e))
 
     def transcribe_audio(self, audio_path: Path,
                         progress_callback: Optional[Callable] = None) -> Optional[str]:

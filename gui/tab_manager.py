@@ -736,6 +736,15 @@ class TabManager:
                 return winner.to_dict()
         return None
 
+    def update_video_data(self, video_id: str, new_data: dict):
+        """Finds a video by its ID across all tabs and updates its data."""
+        for tab in self.tabs.values():
+            for video in tab.results:
+                if video.get('video_id') == video_id:
+                    video.update(new_data)
+                    # No need to update the treeview if the changed data is not visible
+                    return # Stop after finding and updating
+
     def update_folder_filter(self):
         """Updates the folder filter dropdown with the current folders."""
         winners_tab = self.get_winners_tab()

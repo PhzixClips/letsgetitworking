@@ -78,6 +78,7 @@ class SettingsManager:
                 "original by", "credit:", "repost", "ig", "tiktoks", "insta"
             ],
             "generic_hashtags": ["#viral", "#trending", "#fyp", "#mustwatch", "#explore"],
+            "preferred_audio_format": "m4a",
 
             # Window
             "window_geometry": "1200x700",

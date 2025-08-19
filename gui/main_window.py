@@ -1229,32 +1229,107 @@ class MainWindow:
         if not video:
             messagebox.showinfo('Transcribe', 'Please select a video first.')
             return
-        try:
-            video_id = video.get('video_id')
-            title = video.get('title', 'Unknown')
-            url = f'https://www.youtube.com/watch?v={video_id}'
-            progress = ProgressDialog(self.root, "Transcribing...")
-            def progress_callback(status): progress.update_status(status)
-            from config import AUDIO_CLIPS_PATH
-            audio_path = self.media_processor.download_audio_only(video_id, url, AUDIO_CLIPS_PATH)
-            if not audio_path:
-                progress.close(); messagebox.showerror('Error', 'Failed to download audio'); return
-            transcript = self.media_processor.transcribe_audio(audio_path, progress_callback)
-            progress.close()
-            if transcript:
-                clean_title = title.replace('🟢 ','').replace('🔴 ','').strip()
-                TranscriptDialog(self.root, clean_title, video_id, transcript, on_save_callback=self._load_winners_to_tab)
-                try:
-                    caption, hashtags = VideoAnalyzer.generate_caption_and_hashtags(clean_title, transcript)
-                    CaptionDialog(self.root, clean_title, caption, hashtags, str(AUDIO_CLIPS_PATH))
-                except Exception as e:
-                    self.logger.error(f'Caption generation error: {e}')
+
+        # If audio already exists, just transcribe it
+        if video.get('audio_path') and Path(video['audio_path']).exists():
+            self.logger.info(f"Found existing audio file, skipping download: {video['audio_path']}")
+            self._execute_transcription(Path(video['audio_path']), video)
+            return
+
+        # --- Prepare for download ---
+        platform = video.get('platform', 'YouTube')
+        video_id = video.get('video_id')
+        title = video.get('title', 'Unknown')
+        url = video.get('webpage_url')
+        if not url:
+            if platform == 'YouTube':
+                url = f'https://www.youtube.com/watch?v={video_id}'
             else:
-                messagebox.showerror('Error', 'Failed to transcribe audio')
+                messagebox.showerror('Error', 'No URL found for this item.')
+                return
+
+        cookies_path = self.facebook_cookies_path_var.get() if self.use_facebook_cookies_var.get() and platform == 'Facebook' else None
+
+        # --- Define UI Callbacks for the downloader ---
+        def on_ffmpeg_missing():
+            self.ui_call(messagebox.showerror, "FFmpeg Not Found", "ffmpeg could not be found. Please set the correct path in Settings.")
+            self.ui_call(self._open_settings)
+
+        def on_login_required():
+            self.ui_call(messagebox.showinfo, "Login Required", "This content is private. Please provide a valid cookies.txt file for Facebook and try again.")
+            # We don't automatically retry here, user should check cookies and click again.
+
+        ui_callbacks = {
+            'on_fallback': lambda msg: self.ui_call(self._set_status_message, msg, None),
+            'on_ffmpeg_missing': on_ffmpeg_missing,
+            'on_login_required': on_login_required,
+            'on_update_start': lambda: self.ui_call(self._set_status_message, "yt-dlp extractor error, attempting update...", None),
+            'on_update_complete': lambda: self.ui_call(self._set_status_message, "yt-dlp updated, retrying download...", None),
+        }
+
+        # --- Execute download in a thread ---
+        self._set_status_message(f"Starting audio download for '{title[:30]}...'", None)
+
+        def _download_task():
+            from config import AUDIO_CLIPS_PATH
+            download_result = self.media_processor.download_audio(
+                url=url,
+                output_path=AUDIO_CLIPS_PATH,
+                cookies_path=cookies_path,
+                ui_callbacks=ui_callbacks
+            )
+            self.ui_call(self._on_audio_download_complete, download_result, video)
+
+        threading.Thread(target=_download_task, daemon=True).start()
+
+    def _on_audio_download_complete(self, result, video_data):
+        """Callback that runs on the UI thread after audio download attempt."""
+        if result.success and result.filepath:
+            self.logger.info(f"Audio download successful: {result.filepath}")
+            self._set_status_message("Audio download complete. Starting transcription...", None)
+
+            # --- Nice-to-have: Attach path to row data ---
+            self.tab_manager.update_video_data(video_data['video_id'], {'audio_path': str(result.filepath)})
+
+            self._execute_transcription(result.filepath, video_data)
+        else:
+            self.logger.error(f"Audio download failed: {result.error}")
+            self._clear_status_message()
+            messagebox.showerror('Download Error', f"Failed to download audio for transcription.\n\nError: {result.error}")
+
+    def _execute_transcription(self, audio_path: Path, video_data: dict):
+        """Handles the transcription process itself."""
+        video_id = video_data.get('video_id')
+        title = video_data.get('title', 'Unknown')
+
+        progress = ProgressDialog(self.root, "Transcribing...")
+        def progress_callback(status): self.ui_call(progress.update_status, status)
+
+        def _transcribe_task():
+            try:
+                transcript = self.media_processor.transcribe_audio(audio_path, progress_callback)
+                self.ui_call(progress.close)
+                if transcript:
+                    self.ui_call(self._on_transcription_complete, transcript, video_id, title)
+                else:
+                    self.ui_call(messagebox.showerror, 'Error', 'Failed to transcribe audio.')
+            except Exception as e:
+                self.logger.error(f'Transcription execution error: {e}')
+                self.ui_call(progress.close)
+                self.ui_call(messagebox.showerror, 'Transcription Error', f'An unexpected error occurred: {e}')
+
+        threading.Thread(target=_transcribe_task, daemon=True).start()
+
+    def _on_transcription_complete(self, transcript, video_id, title):
+        """Callback on UI thread after transcription is done."""
+        clean_title = title.replace('🟢 ','').replace('🔴 ','').strip()
+        TranscriptDialog(self.root, clean_title, video_id, transcript, on_save_callback=self._load_winners_to_tab)
+        try:
+            from config import AUDIO_CLIPS_PATH
+            caption, hashtags = VideoAnalyzer.generate_caption_and_hashtags(clean_title, transcript)
+            CaptionDialog(self.root, clean_title, caption, hashtags, str(AUDIO_CLIPS_PATH))
         except Exception as e:
-            if 'progress' in locals(): progress.close()
-            self.logger.error(f'Transcription error: {e}')
-            messagebox.showerror('Transcription Error', f'Error: {e}')
+            self.logger.error(f'Caption generation error: {e}')
 
     def _find_raw_source(self):
         video = self.tab_manager.get_selected_video()
@@ -1379,17 +1454,26 @@ class MainWindow:
         self.load_transcripts_into_prompt([video.get('video_id')])
 
     def _download_transcript_async(self, video_id: str, callback: Optional[callable] = None):
-        """Downloads a transcript in a background thread."""
+        """Downloads a transcript in a background thread using the new robust downloader."""
         self.logger.info(f"Starting async transcript download for {video_id}")
+
+        # This task runs in the background, so we don't have interactive UI.
+        # We assume it's a YouTube URL for now as this is the original context.
+        # For Facebook, a similar async download could be triggered, but would
+        # need to handle cookies non-interactively (e.g. they must already be set).
+        url = f'https://www.youtube.com/watch?v={video_id}'
 
         def _task():
             try:
-                url = f'https://www.youtube.com/watch?v={video_id}'
-                audio_path = self.media_processor.download_audio_only(video_id, url, AUDIO_CLIPS_PATH)
-                if not audio_path:
-                    self.logger.error(f"Failed to download audio for {video_id}")
+                from config import AUDIO_CLIPS_PATH
+                # We don't provide UI callbacks as this is a background task
+                result = self.media_processor.download_audio(url, AUDIO_CLIPS_PATH)
+
+                if not result.success or not result.filepath:
+                    self.logger.error(f"Failed to download audio for {video_id}: {result.error}")
                     return
 
+                audio_path = result.filepath
                 self.media_processor.transcribe_audio(audio_path)
                 self.logger.info(f"Successfully transcribed {video_id}")
 
