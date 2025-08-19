@@ -1,0 +1,64 @@
+{
+    "api_keys": [
+        "AIzaSyAPkOpyEFhiYqBTOWDYp6UnCZPnH-lFI",
+        "AIzaSyAPkOpyEFhiYqmnVoVuf4haQMCFr-NZTVvNUs",
+        "AIzaSyBCBWsJw817Bor6K62IgoM64f-EABm4rXg",
+        "AIzaSyCBlmnUspk4fp6nT81gJbcSz6SnMwPSkmQ"
+    ],
+    "yt_dlp_path": "C:\\yt-dlp\\yt-dlp.exe",
+    "yt_dlp_auto_update": true,
+    "yt_dlp_current_version": "",
+    "yt_dlp_last_update_check": "",
+    "ffmpeg_path": "ffmpeg",
+    "log_path": "/home/jules/OneDrive/Desktop/upgrade_log.txt",
+    "audio_clips_path": "/home/jules/OneDrive/Desktop/audio_clips",
+    "cliphustle_base_path": "/home/jules/Desktop/ClipHustle",
+    "transcripts_path": "test_transcripts",
+    "theme_name": "neon",
+    "ui_scale": 1.0,
+    "font_family": "Segoe UI",
+    "font_sizes": {
+        "base": 16,
+        "sm": 15,
+        "lg": 20,
+        "xl": 22
+    },
+    "max_api_calls": 100,
+    "default_search_count": 10,
+    "min_results_per_call": 3,
+    "default_max_results_per_query": 50,
+    "viral_score_weights": {
+        "momentum": 0.45,
+        "engagement": 0.25,
+        "short_bonus": 0.1,
+        "polarity": 0.1,
+        "trend_flag": 0.1
+    },
+    "repost_keywords": [
+        "tiktok",
+        "instagram",
+        "facebook",
+        "reels",
+        "shorts",
+        "original by",
+        "credit:",
+        "repost",
+        "ig",
+        "tiktoks",
+        "insta"
+    ],
+    "generic_hashtags": [
+        "#viral",
+        "#trending",
+        "#fyp",
+        "#mustwatch",
+        "#explore"
+    ],
+    "window_geometry": "1200x700",
+    "save_default_folder": "Default",
+    "save_auto_open_prompt_builder": false,
+    "save_auto_download_transcript": false,
+    "save_remember_last_folder": true,
+    "preview_in_webview": true,
+    "save_last_used_folder": "Default"
+}

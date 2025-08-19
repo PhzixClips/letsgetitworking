@@ -1,0 +1,128 @@
+{
+  "prompts": [
+    {
+      "id": "research_insight_elite",
+      "label": "Research & Insight (Elite)",
+      "prefix": "You are a senior {discipline} expert. For a {audience} audience at a {reading_level} reading level and {tone} tone, extract exactly {num_insights} non-obvious insights, each with: why it matters, supporting evidence from the transcript (quote/snippet), and a concrete application example. Then synthesize patterns and implications.",
+      "suffix": "Output sections (use these exact headers): 1) Key Insights (1–{num_insights}), 2) Frameworks/Models (named + how to apply), 3) Risks & Counterarguments, 4) Assumptions & Open Questions, 5) {plan_horizon}-Day Action Plan (phased). Constraints: do not invent stats; if data is missing, write “TBD”.",
+      "fields": [
+        {"name": "discipline", "label": "Discipline", "type": "select", "options": ["strategy","marketing","product","operations","finance"], "default": "strategy"},
+        {"name": "audience", "label": "Audience", "type": "select", "options": ["Beginner","Operator","Executive","Investor","Engineer"], "default": "Operator"},
+        {"name": "reading_level", "label": "Reading Level", "type": "select", "options": ["Grade 8","High School","College","Professional"], "default": "College"},
+        {"name": "tone", "label": "Tone", "type": "select", "options": ["direct","neutral","optimistic","skeptical"], "default": "direct"},
+        {"name": "num_insights", "label": "# Insights", "type": "slider", "min": 5, "max": 15, "step": 1, "default": 10},
+        {"name": "plan_horizon", "label": "Plan Horizon", "type": "select", "options": ["30","60","90"], "default": "90"}
+      ]
+    },
+    {
+      "id": "action_plan_369_elite",
+      "label": "Action Plan (30/60/90)",
+      "prefix": "Turn the content into a practical plan grouped by 30/60/90 days with {quick_wins} quick wins in Week 1. Use {risk_tolerance} risk posture. Assume default owner role is {owner_role}.",
+      "suffix": "Return 3 parts: A) Milestones (table with columns: Phase(30/60/90), Milestone, Success KPI, Owner, Start, Due, Effort(S/M/L→hrs), Impact(1–5), Dependencies, Risk, Notes); B) Week-1 Quick Wins (≤{quick_wins}); C) Risks & Mitigations. Do not invent facts—mark missing items as TBD.",
+      "fields": [
+        {"name": "quick_wins", "label": "Quick Wins (count)", "type": "slider", "min": 3, "max": 10, "step": 1, "default": 5},
+        {"name": "risk_tolerance", "label": "Risk Tolerance", "type": "select", "options": ["conservative","balanced","aggressive"], "default": "balanced"},
+        {"name": "owner_role", "label": "Default Owner Role", "type": "text", "default": "PM/Producer"}
+      ]
+    },
+    {
+      "id": "persona_rewrite_elite",
+      "label": "Persona Rewrite (Variants)",
+      "prefix": "Rewrite the key takeaways for a {persona} audience on {platform} in ~{words} words at {reading_level} level with a {tone} tone. Preserve quotes and numbers; do not add claims.",
+      "suffix": "Output: Variant A, Variant B, Variant C. For each: Title (≤60 chars), Body (~{words} words), Single CTA, 5 hashtags (if platform ≠ Email). If “Banned Phrases” supplied, avoid them. End with a 1-line TL;DR.",
+      "fields": [
+        {"name": "persona", "label": "Persona", "type": "select", "options": ["Founder","Marketer","Engineer","Investor","Creator","Student"], "default": "Founder"},
+        {"name": "platform", "label": "Platform", "type": "select", "options": ["LinkedIn","Twitter/X","Email","YouTube Community","Blog"], "default": "LinkedIn"},
+        {"name": "words", "label": "Length (words)", "type": "number", "default": 150},
+        {"name": "reading_level", "label": "Reading Level", "type": "select", "options": ["Grade 8","High School","College","Professional"], "default": "High School"},
+        {"name": "tone", "label": "Tone", "type": "select", "options": ["pragmatic","hype-free","conversational","authoritative"], "default": "pragmatic"},
+        {"name": "banned", "label": "Banned Phrases (comma-sep)", "type": "text", "default": "game-changing, revolutionary"}
+      ]
+    },
+    {
+      "id": "score_improve_weighted_elite",
+      "label": "Score & Improve (Weighted)",
+      "prefix": "Score the transcript on a 1–100 weighted scale across: clarity, evidence, actionability, originality, brand_safety. Use the provided weights.",
+      "suffix": "Return sections: 1) Weights & Scores (table: Dimension | Weight | Score | Rationale | Example), include Weighted Overall and formula; 2) Top 10 Flaws (Severity H/M/L, Fix Effort S/M/L); 3) Fix Plan ordered by ROI; 4) Missing Info to Reach 100 (bullet questions); 5) Before/After (rewrite one weak paragraph).",
+      "fields": [
+        {"name": "w_clarity", "label": "Weight: Clarity", "type": "slider", "min": 0, "max": 5, "step": 1, "default": 3},
+        {"name": "w_evidence", "label": "Weight: Evidence", "type": "slider", "min": 0, "max": 5, "step": 1, "default": 3},
+        {"name": "w_action", "label": "Weight: Actionability", "type": "slider", "min": 0, "max": 5, "step": 1, "default": 4},
+        {"name": "w_original", "label": "Weight: Originality", "type": "slider", "min": 0, "max": 5, "step": 1, "default": 2},
+        {"name": "w_brand", "label": "Weight: Brand-safety", "type": "slider", "min": 0, "max": 5, "step": 1, "default": 3}
+      ]
+    },
+    {
+      "id": "hooks_extractor_elite",
+      "label": "Viral Clip Extractor (Elite)",
+      "prefix": "Identify {num_hooks} timestamped hook moments optimized for {platforms}. Prioritize concrete numbers, contrarian claims, and emotion triggers. Respect each platform’s max length.",
+      "suffix": "Return a table with columns: Start (mm:ss), End (mm:ss), Hook (2 words), Opening Line (<1s), On-screen Text (≤6 words), Angle, B-roll/Overlay, Caption (≤100 chars), CTA, Brand-Safety Flags, Safe Alt Phrasing. End with 3 thumbnail text ideas.",
+      "fields": [
+        {"name": "num_hooks", "label": "# Hooks", "type": "slider", "min": 5, "max": 12, "step": 1, "default": 8},
+        {"name": "platforms", "label": "Platforms", "type": "multiselect", "options": ["TikTok","Reels","Shorts","LinkedIn"], "default": ["TikTok","Reels","Shorts"]}
+      ]
+    },
+    {
+      "id": "business_model_elite",
+      "label": "Business Model Breakdown",
+      "prefix": "Extract and formalize the business model for a {biz_type} context. If numbers are missing, state assumptions at the top with {numbers_confidence} confidence.",
+      "suffix": "Return sections: 1) Revenue Streams (table: Stream | Driver | Price | Volume Assumption | Sensitivities), 2) Cost Structure (Fixed/Variable, % of revenue), 3) Unit Economics (table: CAC, Payback, Gross Margin, LTV with formulas), 4) Moats & Risks, 5) Top 3 Optimization Plays with expected impact.",
+      "fields": [
+        {"name": "biz_type", "label": "Context", "type": "select", "options": ["DTC","SaaS","Marketplace","Creator","Local Service","Media"], "default": "Creator"},
+        {"name": "numbers_confidence", "label": "Assumption Confidence", "type": "select", "options": ["low","medium","high"], "default": "medium"}
+      ]
+    },
+    {
+      "id": "sop_builder_elite",
+      "label": "SOP / How-To (Bulletproof)",
+      "prefix": "Convert into an SOP suitable for a {role} to execute. Include guardrails and checks.",
+      "suffix": "Output: 1) Procedure (numbered, each step with Why/Inputs/Action/Expected Output/Owner/Time), 2) Quality Checklist, 3) Common Failure Modes & Fixes, 4) Tooling & Templates (links if present; else TBD). Keep reading level {reading_level}.",
+      "fields": [
+        {"name": "role", "label": "Primary Role", "type": "text", "default": "Assistant/Creator"},
+        {"name": "reading_level", "label": "Reading Level", "type": "select", "options": ["Grade 8","High School","College","Professional"], "default": "High School"}
+      ]
+    },
+    {
+      "id": "content_calendar_elite",
+      "label": "Content Calendar (30 Days)",
+      "prefix": "Create a {days}-day cross-platform calendar using the chosen content pillars. Brand voice: {voice}.",
+      "suffix": "Return a table: Date, Platform, Pillar, Post Idea, Hook, Format (clip/thread/carousel/live), Asset Needed, CTA, Hashtags, Success Metric. Also output a 5-post ‘starter pack’ (fully written).",
+      "fields": [
+        {"name": "days", "label": "Duration (days)", "type": "slider", "min": 14, "max": 60, "step": 1, "default": 30},
+        {"name": "platforms", "label": "Platforms", "type": "multiselect", "options": ["TikTok","Reels","Shorts","YouTube","LinkedIn","Twitter/X","Instagram Carousel"], "default": ["TikTok","Reels","Shorts","LinkedIn"]},
+        {"name": "pillars", "label": "Content Pillars", "type": "multiselect", "options": ["Education","Storytime","Behind-the-Scenes","Opinion","Case Study","Demo/How-to"], "default": ["Education","Case Study","Storytime"]},
+        {"name": "voice", "label": "Brand Voice", "type": "text", "default": "practical, candid, data-driven"}
+      ]
+    },
+    {
+      "id": "debate_steelman_elite",
+      "label": "Counterarguments & Steelman",
+      "prefix": "Steelman the strongest opposing view to: {viewpoint}. Then reconcile with the transcript’s position.",
+      "suffix": "Output sections: 1) Opposing Case (best version), 2) Evidence For/Against (table), 3) Reconciled View (conditions when each is right), 4) Decision Matrix (When to choose A vs B). Neutral tone; no straw-men.",
+      "fields": [
+        {"name": "viewpoint", "label": "Target Viewpoint", "type": "text", "default": "key claim in the transcript"}
+      ]
+    },
+    {
+      "id": "exec_summary_elite",
+      "label": "Executive Summary (Bullets + Pull-quotes)",
+      "prefix": "Summarize for a busy {audience} in ~{length} words with {tone} tone. Surface decisions and numbers first.",
+      "suffix": "Return: 1) One-paragraph summary (~{length} words), 2) 5 Key Bullets (facts/decisions only), 3) 3 Pull-quotes, 4) 3 Tweet-length lines (≤280 chars). No fluff.",
+      "fields": [
+        {"name": "audience", "label": "Audience", "type": "select", "options": ["Executive","Founder","Operator","Investor"], "default": "Executive"},
+        {"name": "length", "label": "Length (words)", "type": "number", "default": 180},
+        {"name": "tone", "label": "Tone", "type": "select", "options": ["concise","neutral","direct"], "default": "concise"}
+      ]
+    },
+    {
+      "id": "repurpose_multiformat_elite",
+      "label": "Repurpose: Thread/Carousel/Email",
+      "prefix": "Repurpose into 3 formats tuned to the chosen platform. Preserve core claims and numbers; add examples if missing (mark as examples).",
+      "suffix": "Return: A) Twitter/X Thread (8–12 tweets, numbered, strong hook tweet), B) LinkedIn Carousel outline (10 slides: slide title + 1-2 bullets), C) Email (subject, preview line, body with scannable subheads, single CTA).",
+      "fields": [
+        {"name": "primary_platform", "label": "Primary Platform", "type": "select", "options": ["Twitter/X","LinkedIn","Email"], "default": "LinkedIn"},
+        {"name": "cta", "label": "CTA", "type": "text", "default": "Subscribe for the full breakdown"}
+      ]
+    }
+  ]
+}

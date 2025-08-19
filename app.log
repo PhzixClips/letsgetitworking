@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/app/main.py", line 6, in <module>
+    from gui.main_window import MainWindow
+  File "/app/gui/main_window.py", line 21, in <module>
+    from media.media_processor import MediaProcessor
+  File "/app/media/media_processor.py", line 9, in <module>
+    import whisper
+ModuleNotFoundError: No module named 'whisper'
