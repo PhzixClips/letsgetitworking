@@ -58,6 +58,7 @@
     "save_auto_download_transcript": false,
     "save_remember_last_folder": true,
     "save_last_used_folder": "Default",
+    "last_resolved_audio_path": "",
     "yt_dlp_auto_update": true,
     "yt_dlp_current_version": "",
     "yt_dlp_last_update_check": "",

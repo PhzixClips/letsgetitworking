@@ -148,6 +148,18 @@ class SettingsWindow(tk.Toplevel):
 
         self.update_button = ttk.Button(frame, text="Check for Updates", command=self._check_for_yt_dlp_updates)
         self.update_button.grid(row=row, column=0, pady=10)
+        row += 1
+
+        ttk.Separator(frame, orient='horizontal').grid(row=row, column=0, columnspan=3, sticky='ew', pady=15)
+        row += 1
+
+        ttk.Label(frame, text="Debugging Info", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, sticky='w', pady=5)
+        row += 1
+
+        ttk.Label(frame, text="Last Resolved Audio Path:").grid(row=row, column=0, sticky='w', pady=2)
+        self.vars['last_resolved_audio_path'] = tk.StringVar()
+        entry = ttk.Entry(frame, textvariable=self.vars['last_resolved_audio_path'], state='readonly')
+        entry.grid(row=row, column=1, columnspan=2, sticky='ew', padx=5)
 
         return frame
 
@@ -251,6 +263,7 @@ class SettingsWindow(tk.Toplevel):
         self.vars['yt_dlp_path'].set(self.settings.get('yt_dlp_path'))
         self.vars['ffmpeg_path'].set(self.settings.get('ffmpeg_path'))
         self.vars['cliphustle_base_path'].set(self.settings.get('cliphustle_base_path'))
+        self.vars['last_resolved_audio_path'].set(self.settings.get('last_resolved_audio_path', ''))
 
         # Search & Analysis
         self.vars['max_api_calls'].set(self.settings.get('max_api_calls'))

@@ -173,6 +173,7 @@ class MediaProcessor:
 
     def download_audio(self,
                        url: str,
+                       video_id: str,
                        output_path: Path,
                        *,
                        cookies_path: Optional[str] = None,
@@ -188,6 +189,7 @@ class MediaProcessor:
             # The actual download logic is now delegated to the helper
             result = download_audio_from_url(
                 url=url,
+                video_id=video_id,
                 cookies_path=cookies_path,
                 outdir=str(output_path),
                 preferred_ext=preferred_ext,

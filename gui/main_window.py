@@ -1275,6 +1275,7 @@ class MainWindow:
             from config import AUDIO_CLIPS_PATH
             download_result = self.media_processor.download_audio(
                 url=url,
+                video_id=video_id,
                 output_path=AUDIO_CLIPS_PATH,
                 cookies_path=cookies_path,
                 ui_callbacks=ui_callbacks
@@ -1293,6 +1294,9 @@ class MainWindow:
             video_id = video_data.get('video_id')
             self.tab_manager.update_video_data(video_id, {'audio_path': str(result.filepath)})
             self.logger.debug(f"FB: captured audio path for transcription: {result.filepath} for video_id {video_id}")
+
+            # Update debugging info in settings
+            settings_manager.set('last_resolved_audio_path', str(result.filepath))
 
             self._execute_transcription(result.filepath, video_data)
         else:
@@ -1492,7 +1496,7 @@ class MainWindow:
             try:
                 from config import AUDIO_CLIPS_PATH
                 # We don't provide UI callbacks as this is a background task
-                result = self.media_processor.download_audio(url, AUDIO_CLIPS_PATH)
+                result = self.media_processor.download_audio(url, video_id, AUDIO_CLIPS_PATH)
 
                 if not result.success or not result.filepath:
                     self.logger.error(f"Failed to download audio for {video_id}: {result.error}")

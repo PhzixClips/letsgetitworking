@@ -14,6 +14,7 @@ from utils.logging import log_upgrade
 from integrations.facebook_helper import canonicalize_facebook_url
 from core.proc import run_cmd_safe
 from core.strings import safe_strip
+from core.file_utils import resolve_final_output_path
 
 
 @dataclass
@@ -125,6 +126,7 @@ def is_ffmpeg_available() -> bool:
 
 def download_audio_from_url(
     url: str,
+    video_id: str,
     *,
     cookies_path: Optional[str],
     outdir: str,
@@ -135,20 +137,25 @@ def download_audio_from_url(
     Downloads audio from a URL using a multi-step fallback strategy.
     Designed to be run in a worker thread.
     """
-    logger = log_upgrade # Use the existing logger for now
-    logger(f"Audio download start: url={url}")
+    logger = log_upgrade
+    logger(f"Audio download start: url={url}, video_id={video_id}")
+
+    output_template = os.path.join(outdir, "%(id)s__%(title).200s.%(ext)s")
+
+    base_cmd = [
+        YT_DLP_PATH,
+        '--no-playlist', '--no-warnings', '--no-call-home',
+        '--restrict-filenames',
+        '--no-simulate', '--no-part', '--newline',
+        '--print', 'after_move:filepath',
+        '--print', 'filename',
+        '--extractor-args', 'facebook:lang=en_US',
+        '-o', output_template
+    ]
 
     # --- Attempt A: Native Audio-Only ---
     logger("Attempting audio-only download (Attempt A)")
-    output_template = Path(outdir) / "%(title).200s.%(ext)s"
-    cmd_a = [
-        YT_DLP_PATH,
-        '-f', 'bestaudio/bestaudio*',
-        '--no-playlist', '--no-warnings', '--no-call-home',
-        '--extractor-args', 'facebook:lang=en_US',
-        '--print', 'after_move:filepath',
-        '-o', str(output_template)
-    ]
+    cmd_a = base_cmd + ['-f', 'bestaudio/bestaudio*']
 
     safe_cookies_path = safe_strip(cookies_path)
     if safe_cookies_path:
@@ -158,13 +165,13 @@ def download_audio_from_url(
     rc_a, stdout_a, stderr_a = run_cmd_safe(cmd_a)
 
     if rc_a == 0:
-        final_path = safe_strip(stdout_a.splitlines()[-1] if stdout_a.splitlines() else "")
-        if final_path and Path(final_path).exists():
-            logger(f"Successfully downloaded audio-only file: {final_path}")
-            return DownloadResult(success=True, filepath=Path(final_path), error=None)
+        final_path_str = resolve_final_output_path(stdout_a, outdir, video_id)
+        if final_path_str:
+            logger(f"Successfully downloaded audio-only file: {final_path_str}")
+            return DownloadResult(success=True, filepath=Path(final_path_str), error=None)
         else:
-            logger(f"Download seemed to succeed but could not find file from output: {stdout_a}")
-            return DownloadResult(success=False, filepath=None, error="Download successful, but output file path not found.")
+            logger(f"Download (A) seemed to succeed but could not find file from output: {stdout_a}")
+            return DownloadResult(success=False, filepath=None, error="Download successful, but could not locate the output file.")
 
     # --- Analyze Failure of Attempt A ---
     if "requested format not available" in stderr_a.lower() or "no audio-only formats found" in stderr_a.lower():
@@ -180,16 +187,11 @@ def download_audio_from_url(
             return DownloadResult(success=False, filepath=None, error="ffmpeg not found. Set path in Settings.")
 
         logger("Attempting muxed download with audio extraction (Attempt B)")
-        cmd_b = [
-            YT_DLP_PATH,
+        cmd_b = base_cmd + [
             '-f', 'best/best*',
-            '--no-playlist', '--no-warnings', '--no-call-home',
-            '--extractor-args', 'facebook:lang=en_US',
-            '--no-part', '--retries', '3', '--fragment-retries', '3',
+            '--retries', '3', '--fragment-retries', '3',
             '--postprocessor-args', 'ExtractAudio:-vn',
             '--extract-audio', '--audio-format', preferred_ext, '--audio-quality', '0',
-            '--print', 'after_move:filepath',
-            '-o', str(output_template)
         ]
         if safe_cookies_path:
             cmd_b.extend(['--cookies', safe_cookies_path])
@@ -198,13 +200,13 @@ def download_audio_from_url(
         rc_b, stdout_b, stderr_b = run_cmd_safe(cmd_b)
 
         if rc_b == 0:
-            final_path = safe_strip(stdout_b.splitlines()[-1] if stdout_b.splitlines() else "")
-            if final_path and Path(final_path).exists():
-                logger(f"Successfully downloaded and extracted audio: {final_path}")
-                return DownloadResult(success=True, filepath=Path(final_path), error=None)
+            final_path_str = resolve_final_output_path(stdout_b, outdir, video_id)
+            if final_path_str:
+                logger(f"Successfully downloaded and extracted audio: {final_path_str}")
+                return DownloadResult(success=True, filepath=Path(final_path_str), error=None)
             else:
-                logger(f"Extraction seemed to succeed but could not find file from output: {stdout_b}")
-                return DownloadResult(success=False, filepath=None, error="Extraction successful, but output file path not found.")
+                logger(f"Extraction (B) seemed to succeed but could not find file from output: {stdout_b}")
+                return DownloadResult(success=False, filepath=None, error="Extraction successful, but could not locate the output file.")
 
         # --- Attempt C: Canonicalization Retry ---
         else:
@@ -212,16 +214,16 @@ def download_audio_from_url(
             canonical_url = canonicalize_facebook_url(url)
             if canonical_url and canonical_url != url:
                 logger(f"Attempting canonical URL retry (Attempt C) with: {canonical_url}")
-                cmd_b[-1] = canonical_url # Replace URL in command
+                cmd_b[-1] = canonical_url
                 rc_c, stdout_c, stderr_c = run_cmd_safe(cmd_b)
                 if rc_c == 0:
-                    final_path = safe_strip(stdout_c.splitlines()[-1] if stdout_c.splitlines() else "")
-                    if final_path and Path(final_path).exists():
-                        logger(f"Successfully downloaded on canonical URL retry: {final_path}")
-                        return DownloadResult(success=True, filepath=Path(final_path), error=None)
+                    final_path_str = resolve_final_output_path(stdout_c, outdir, video_id)
+                    if final_path_str:
+                        logger(f"Successfully downloaded on canonical URL retry: {final_path_str}")
+                        return DownloadResult(success=True, filepath=Path(final_path_str), error=None)
                     else:
-                        logger(f"Canonical retry seemed to succeed but could not find file from output: {stdout_c}")
-                        return DownloadResult(success=False, filepath=None, error="Canonical retry successful, but output file path not found.")
+                        logger(f"Canonical retry (C) seemed to succeed but could not find file from output: {stdout_c}")
+                        return DownloadResult(success=False, filepath=None, error="Canonical retry successful, but could not locate the output file.")
                 else:
                     logger(f"Canonical URL retry failed. Final error: {stderr_c}")
                     return DownloadResult(success=False, filepath=None, error=stderr_c)
@@ -247,7 +249,7 @@ def download_audio_from_url(
             if ui_callbacks and 'on_update_complete':
                 ui_callbacks['on_update_complete']()
             logger("Retrying download after update.")
-            return download_audio_from_url(url, cookies_path=cookies_path, outdir=outdir, preferred_ext=preferred_ext, ui_callbacks=ui_callbacks)
+            return download_audio_from_url(url, video_id, cookies_path=cookies_path, outdir=outdir, preferred_ext=preferred_ext, ui_callbacks=ui_callbacks)
         else:
             short_err = f"Extractor error and update failed or was not available. Original error: {stderr_a}"
             logger(short_err)

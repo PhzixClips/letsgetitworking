@@ -88,7 +88,10 @@ class SettingsManager:
             "save_auto_open_prompt_builder": False,
             "save_auto_download_transcript": False,
             "save_remember_last_folder": True,
-            "save_last_used_folder": "Default"
+            "save_last_used_folder": "Default",
+
+            # Debugging
+            "last_resolved_audio_path": ""
         }
 
     def load_settings(self):
