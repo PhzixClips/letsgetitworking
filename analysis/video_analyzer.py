@@ -9,6 +9,7 @@ import isodate
 from langdetect import detect, DetectorFactory
 from config import VIRAL_SCORE_WEIGHTS, REPOST_KEYWORDS, GENERIC_HASHTAGS
 from utils.logging import log_upgrade
+from core.strings import safe_strip
 
 # Ensure consistent language detection
 DetectorFactory.seed = 0
@@ -128,10 +129,10 @@ class VideoAnalyzer:
         """Calculate recency multiplier based on video age"""
         try:
             if 'h' in age_str:
-                hours = float(age_str.replace('h', '').replace(' ago', '').strip())
+                hours = float(safe_strip(age_str.replace('h', '').replace(' ago', '')))
                 return max(0.2, 1 / (1 + hours / 24))
             elif 'd' in age_str:
-                days = float(age_str.replace('d', '').replace(' ago', '').strip())
+                days = float(safe_strip(age_str.replace('d', '').replace(' ago', '')))
                 return max(0.1, 1 / (1 + days))
         except Exception:
             pass
@@ -293,9 +294,9 @@ class VideoAnalyzer:
     def generate_caption_and_hashtags(title: str, transcript: Optional[str] = None) -> Tuple[str, List[str]]:
         """Generate caption and hashtags for content"""
         # Generate caption (≤120 chars)
-        caption_base = title.strip()
+        caption_base = safe_strip(title)
         if transcript:
-            snippet = transcript.strip().split('\n')[0][:80]
+            snippet = safe_strip(transcript).split('\n')[0][:80]
             if snippet and snippet.lower() not in caption_base.lower():
                 caption_base = f"{caption_base} - {snippet}"
         caption = caption_base[:120]

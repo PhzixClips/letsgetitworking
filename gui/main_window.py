@@ -20,6 +20,7 @@ from gui.settings_window import SettingsWindow
 from data.settings_manager import settings_manager
 
 # Core modules
+from core.strings import safe_strip
 from search.search_engine import SearchEngine
 from media.media_processor import MediaProcessor
 from analysis.video_analyzer import VideoAnalyzer
@@ -1661,10 +1662,11 @@ class FacebookAnalysisTask:
             return
 
         # Check for specific extractor errors
-        is_extractor_error = "extractorerror" in result.error.lower() or "cannot parse data" in result.error.lower()
+        error_str = safe_strip(result.error).lower()
+        is_extractor_error = "extractorerror" in error_str or "cannot parse data" in error_str
 
         if is_extractor_error:
-            self.logger.warning(f"FB extractor error detected: {result.error[:100]}")
+            self.logger.warning(f"FB extractor error detected: {error_str[:100]}")
 
             # Attempt 2: Try canonical URLs
             canonical_url = canonicalize_facebook_url(self.original_url)
@@ -1693,7 +1695,8 @@ class FacebookAnalysisTask:
                         return
 
         # If all else fails, check for login error and prompt or show final error modal
-        is_login_error = "login required" in result.error.lower() or "you must log in" in result.error.lower()
+        error_str = safe_strip(result.error).lower()
+        is_login_error = "login required" in error_str or "you must log in" in error_str
         if is_login_error:
             self.logger.info("Login error detected, prompting user for cookies.")
             self.main.ui_call(self._prompt_for_cookies)

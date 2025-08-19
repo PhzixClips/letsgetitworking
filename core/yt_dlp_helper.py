@@ -2,7 +2,6 @@
 A helper module for interacting with the yt-dlp command-line tool.
 """
 
-import subprocess
 import json
 import os
 from pathlib import Path
@@ -13,6 +12,8 @@ from config import YT_DLP_PATH
 from data.settings_manager import settings_manager
 from utils.logging import log_upgrade
 from integrations.facebook_helper import canonicalize_facebook_url
+from core.proc import run_cmd_safe
+from core.strings import safe_strip
 
 
 @dataclass
@@ -43,17 +44,13 @@ def get_yt_dlp_version() -> Optional[str]:
     """
     if not YT_DLP_PATH:
         return None
-    try:
-        result = subprocess.run(
-            [YT_DLP_PATH, "--version"],
-            capture_output=True,
-            text=True,
-            check=True,
-            encoding='utf-8'
-        )
-        return result.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        log_upgrade(f"Failed to get yt-dlp version: {e}")
+
+    returncode, stdout, stderr = run_cmd_safe([YT_DLP_PATH, "--version"])
+
+    if returncode == 0:
+        return safe_strip(stdout)
+    else:
+        log_upgrade(f"Failed to get yt-dlp version: {stderr}")
         return None
 
 def update_yt_dlp() -> UpdateResult:
@@ -63,34 +60,25 @@ def update_yt_dlp() -> UpdateResult:
     """
     if not YT_DLP_PATH:
         return UpdateResult(success=False, updated=False, message="yt-dlp path not configured.")
-    try:
-        result = subprocess.run(
-            [YT_DLP_PATH, "-U"],
-            capture_output=True,
-            text=True,
-            check=True,
-            encoding='utf-8'
-        )
-        output = result.stdout.strip()
+
+    returncode, stdout, stderr = run_cmd_safe([YT_DLP_PATH, "-U"])
+
+    if returncode == 0:
+        output = safe_strip(stdout)
         if "is up to date" in output:
             return UpdateResult(success=True, updated=False, message=output)
         elif "Updated" in output:
             return UpdateResult(success=True, updated=True, message=output)
         else:
             return UpdateResult(success=True, updated=False, message=output)
-    except subprocess.CalledProcessError as e:
-        error_message = f"Update command failed with exit code {e.returncode}.\nStderr: {e.stderr.strip()}"
+    else:
+        error_message = f"Update command failed with exit code {returncode}.\nStderr: {stderr}"
         return UpdateResult(success=False, updated=False, message=error_message)
-    except FileNotFoundError:
-        return UpdateResult(success=False, updated=False, message="yt-dlp executable not found.")
-    except Exception as e:
-        return UpdateResult(success=False, updated=False, message=f"An unexpected error occurred: {e}")
+
 
 def run_metadata_dump(url: str, cookies: Optional[str] = None, extra_args: Optional[List[str]] = None) -> ExtractionResult:
     """
     Runs `yt-dlp --dump-json` for a given URL and returns the parsed data.
-
-    This is a wrapper that centralizes the call to yt-dlp for metadata extraction.
     """
     if not YT_DLP_PATH:
         return ExtractionResult(success=False, data=None, error="yt-dlp path not configured.")
@@ -102,29 +90,24 @@ def run_metadata_dump(url: str, cookies: Optional[str] = None, extra_args: Optio
         '--no-call-home',
         '--concurrent-fragments', '4',
     ]
-    if cookies:
-        command.extend(['--cookies', cookies])
+
+    safe_cookies_path = safe_strip(cookies)
+    if safe_cookies_path:
+        command.extend(['--cookies', safe_cookies_path])
     if extra_args:
         command.extend(extra_args)
 
     command.append(url)
 
-    try:
-        process = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=True,
-            encoding='utf-8'
-        )
-        return ExtractionResult(success=True, data=json.loads(process.stdout), error=None)
-    except subprocess.CalledProcessError as e:
-        error_output = e.stderr.strip()
-        return ExtractionResult(success=False, data=None, error=error_output)
-    except json.JSONDecodeError:
-        return ExtractionResult(success=False, data=None, error="Failed to parse yt-dlp JSON output.")
-    except Exception as e:
-        return ExtractionResult(success=False, data=None, error=f"An unexpected error occurred: {e}")
+    returncode, stdout, stderr = run_cmd_safe(command)
+
+    if returncode == 0:
+        try:
+            return ExtractionResult(success=True, data=json.loads(stdout), error=None)
+        except json.JSONDecodeError:
+            return ExtractionResult(success=False, data=None, error="Failed to parse yt-dlp JSON output.")
+    else:
+        return ExtractionResult(success=False, data=None, error=stderr)
 
 
 def is_ffmpeg_available() -> bool:
@@ -132,31 +115,12 @@ def is_ffmpeg_available() -> bool:
     Checks if the ffmpeg executable is available and can be run.
     """
     ffmpeg_path = settings_manager.get('ffmpeg_path', 'ffmpeg')
-    try:
-        # We run 'ffmpeg -version', which is a quick and reliable way to check.
-        # We capture output to prevent it from printing to the console.
-        result = subprocess.run(
-            [ffmpeg_path, "-version"],
-            capture_output=True,
-            text=True,
-            check=True,
-            encoding='utf-8'
-        )
-        # If check=True, it will raise CalledProcessError for non-zero exit codes.
-        # So, if we get here, it means ffmpeg ran successfully.
-        return True
-    except FileNotFoundError:
-        # This is the most common error: the executable doesn't exist.
-        log_upgrade(f"ffmpeg not found at path: {ffmpeg_path}")
+    returncode, stdout, stderr = run_cmd_safe([ffmpeg_path, "-version"])
+
+    if returncode != 0:
+        log_upgrade(f"ffmpeg check failed. rc={returncode}, stderr={stderr}")
         return False
-    except subprocess.CalledProcessError as e:
-        # This means ffmpeg ran but returned an error code.
-        log_upgrade(f"ffmpeg check failed with exit code {e.returncode}: {e.stderr}")
-        return False
-    except Exception as e:
-        # Catch any other unexpected errors.
-        log_upgrade(f"An unexpected error occurred during ffmpeg check: {e}")
-        return False
+    return True
 
 
 def download_audio_from_url(
@@ -172,25 +136,7 @@ def download_audio_from_url(
     Designed to be run in a worker thread.
     """
     logger = log_upgrade # Use the existing logger for now
-    logger(f"Audio download start (FB): url={url}")
-
-    # --- Helper to run a yt-dlp command ---
-    def _run_yt_dlp(cmd: List[str]) -> (bool, str, str):
-        try:
-            process = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                check=True
-            )
-            return True, process.stdout.strip(), process.stderr.strip()
-        except subprocess.CalledProcessError as e:
-            return False, e.stdout.strip(), e.stderr.strip()
-        except FileNotFoundError:
-            return False, "", "yt-dlp executable not found."
-        except Exception as e:
-            return False, "", f"An unexpected error occurred: {e}"
+    logger(f"Audio download start: url={url}")
 
     # --- Attempt A: Native Audio-Only ---
     logger("Attempting audio-only download (Attempt A)")
@@ -200,35 +146,25 @@ def download_audio_from_url(
         '-f', 'bestaudio/bestaudio*',
         '--no-playlist', '--no-warnings', '--no-call-home',
         '--extractor-args', 'facebook:lang=en_US',
+        '--print', 'after_move:filepath',
         '-o', str(output_template)
     ]
-    if cookies_path:
-        cmd_a.extend(['--cookies', cookies_path])
+
+    safe_cookies_path = safe_strip(cookies_path)
+    if safe_cookies_path:
+        cmd_a.extend(['--cookies', safe_cookies_path])
     cmd_a.append(url)
 
-    success, stdout_a, stderr_a = _run_yt_dlp(cmd_a)
+    rc_a, stdout_a, stderr_a = run_cmd_safe(cmd_a)
 
-    if success:
-        # Find the downloaded file
-        # This is tricky as yt-dlp determines the final name
-        # We can parse stdout or scan the directory
-        try:
-            # yt-dlp usually prints the destination file path
-            filepath_str = ""
-            for line in stdout_a.splitlines():
-                if "[download] Destination:" in line:
-                    filepath_str = line.split("Destination:")[1].strip()
-                elif "has already been downloaded" in line:
-                    filepath_str = line.split("[download]")[1].split("has already been downloaded")[0].strip()
-
-            if filepath_str and Path(filepath_str).exists():
-                logger(f"Successfully downloaded audio-only file: {filepath_str}")
-                return DownloadResult(success=True, filepath=Path(filepath_str), error=None)
-        except Exception as e:
-            logger(f"Could not parse filepath from yt-dlp output, but download was successful. Error: {e}")
-            # Fallback: still return success but no filepath for now
-            return DownloadResult(success=True, filepath=None, error="Could not determine output file path.")
-
+    if rc_a == 0:
+        final_path = safe_strip(stdout_a.splitlines()[-1] if stdout_a.splitlines() else "")
+        if final_path and Path(final_path).exists():
+            logger(f"Successfully downloaded audio-only file: {final_path}")
+            return DownloadResult(success=True, filepath=Path(final_path), error=None)
+        else:
+            logger(f"Download seemed to succeed but could not find file from output: {stdout_a}")
+            return DownloadResult(success=False, filepath=None, error="Download successful, but output file path not found.")
 
     # --- Analyze Failure of Attempt A ---
     if "requested format not available" in stderr_a.lower() or "no audio-only formats found" in stderr_a.lower():
@@ -244,7 +180,6 @@ def download_audio_from_url(
             return DownloadResult(success=False, filepath=None, error="ffmpeg not found. Set path in Settings.")
 
         logger("Attempting muxed download with audio extraction (Attempt B)")
-        output_template_b = Path(outdir) / "%(title).200s.%(ext)s"
         cmd_b = [
             YT_DLP_PATH,
             '-f', 'best/best*',
@@ -253,30 +188,23 @@ def download_audio_from_url(
             '--no-part', '--retries', '3', '--fragment-retries', '3',
             '--postprocessor-args', 'ExtractAudio:-vn',
             '--extract-audio', '--audio-format', preferred_ext, '--audio-quality', '0',
-            '-o', str(output_template_b)
+            '--print', 'after_move:filepath',
+            '-o', str(output_template)
         ]
-        if cookies_path:
-            cmd_b.extend(['--cookies', cookies_path])
+        if safe_cookies_path:
+            cmd_b.extend(['--cookies', safe_cookies_path])
         cmd_b.append(url)
 
-        success_b, stdout_b, stderr_b = _run_yt_dlp(cmd_b)
+        rc_b, stdout_b, stderr_b = run_cmd_safe(cmd_b)
 
-        if success_b:
-            try:
-                # When using --extract-audio, yt-dlp prints the final audio file path
-                filepath_str = ""
-                for line in stdout_b.splitlines():
-                    if "[ExtractAudio] Destination:" in line:
-                        filepath_str = line.split("Destination:")[1].strip()
-                        break
-                if filepath_str and Path(filepath_str).exists():
-                    logger(f"Successfully downloaded and extracted audio: {filepath_str}")
-                    return DownloadResult(success=True, filepath=Path(filepath_str), error=None)
-                else:
-                    raise ValueError("Could not find extracted audio file path in output.")
-            except Exception as e:
-                logger(f"Could not parse extracted audio filepath from yt-dlp output. Error: {e}")
-                return DownloadResult(success=True, filepath=None, error="Could not determine output file path.")
+        if rc_b == 0:
+            final_path = safe_strip(stdout_b.splitlines()[-1] if stdout_b.splitlines() else "")
+            if final_path and Path(final_path).exists():
+                logger(f"Successfully downloaded and extracted audio: {final_path}")
+                return DownloadResult(success=True, filepath=Path(final_path), error=None)
+            else:
+                logger(f"Extraction seemed to succeed but could not find file from output: {stdout_b}")
+                return DownloadResult(success=False, filepath=None, error="Extraction successful, but output file path not found.")
 
         # --- Attempt C: Canonicalization Retry ---
         else:
@@ -285,36 +213,25 @@ def download_audio_from_url(
             if canonical_url and canonical_url != url:
                 logger(f"Attempting canonical URL retry (Attempt C) with: {canonical_url}")
                 cmd_b[-1] = canonical_url # Replace URL in command
-                success_c, stdout_c, stderr_c = _run_yt_dlp(cmd_b)
-                if success_c:
-                    try:
-                        filepath_str = ""
-                        for line in stdout_c.splitlines():
-                            if "[ExtractAudio] Destination:" in line:
-                                filepath_str = line.split("Destination:")[1].strip()
-                                break
-                        if filepath_str and Path(filepath_str).exists():
-                            logger(f"Successfully downloaded on canonical URL retry: {filepath_str}")
-                            return DownloadResult(success=True, filepath=Path(filepath_str), error=None)
-                        else:
-                            raise ValueError("Could not find extracted audio file path in output.")
-                    except Exception as e:
-                        logger(f"Could not parse filepath from canonical retry output. Error: {e}")
-                        return DownloadResult(success=True, filepath=None, error="Could not determine output file path.")
+                rc_c, stdout_c, stderr_c = run_cmd_safe(cmd_b)
+                if rc_c == 0:
+                    final_path = safe_strip(stdout_c.splitlines()[-1] if stdout_c.splitlines() else "")
+                    if final_path and Path(final_path).exists():
+                        logger(f"Successfully downloaded on canonical URL retry: {final_path}")
+                        return DownloadResult(success=True, filepath=Path(final_path), error=None)
+                    else:
+                        logger(f"Canonical retry seemed to succeed but could not find file from output: {stdout_c}")
+                        return DownloadResult(success=False, filepath=None, error="Canonical retry successful, but output file path not found.")
                 else:
                     logger(f"Canonical URL retry failed. Final error: {stderr_c}")
                     return DownloadResult(success=False, filepath=None, error=stderr_c)
 
-            # If no canonical URL or it failed, return original error from attempt B
             return DownloadResult(success=False, filepath=None, error=stderr_b)
 
     # --- Handle other errors from Attempt A ---
     if "login required" in stderr_a.lower() or "you must log in" in stderr_a.lower():
         logger("FB: login required")
         if ui_callbacks and 'on_login_required':
-            # This is tricky. The worker thread can't block on UI.
-            # The UI should be prompted, get new cookies, and then re-trigger the download.
-            # For now, we just report the error.
             ui_callbacks['on_login_required']()
         return DownloadResult(success=False, filepath=None, error="Login required. Please provide cookies.txt and retry.")
 
@@ -329,7 +246,6 @@ def download_audio_from_url(
         if update_result.success and update_result.updated:
             if ui_callbacks and 'on_update_complete':
                 ui_callbacks['on_update_complete']()
-            # Retry the whole function
             logger("Retrying download after update.")
             return download_audio_from_url(url, cookies_path=cookies_path, outdir=outdir, preferred_ext=preferred_ext, ui_callbacks=ui_callbacks)
         else:
@@ -337,7 +253,5 @@ def download_audio_from_url(
             logger(short_err)
             return DownloadResult(success=False, filepath=None, error=short_err)
 
-
-    # If we've reached here, it's a generic failure from Attempt A
     logger(f"FB audio download failed: {stderr_a}")
     return DownloadResult(success=False, filepath=None, error=stderr_a)

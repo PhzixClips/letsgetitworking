@@ -3,7 +3,6 @@ Media processing for video downloads, transcription, and frame extraction
 """
 
 import os
-import subprocess
 from pathlib import Path
 from typing import Optional, Callable, Dict
 
@@ -12,6 +11,8 @@ from config import YT_DLP_PATH, FFMPEG_PATH, FRAMES_DIR_NAME, AUDIO_FILE_NAME, A
 from utils.logging import log_upgrade
 from core.yt_dlp_helper import download_audio_from_url, DownloadResult
 from data.settings_manager import settings_manager
+from core.proc import run_cmd_safe
+from core.strings import safe_strip
 
 class MediaProcessor:
     """Handles video downloads, audio extraction, and transcription"""
@@ -23,6 +24,7 @@ class MediaProcessor:
                       progress_callback: Optional[Callable] = None) -> bool:
         """Download video using yt-dlp"""
         try:
+            # Note: safe_strip is not strictly needed here as Path handles objects, but good practice.
             output_template = str(output_path / '%(title)s.%(ext)s')
 
             cmd = [
@@ -35,16 +37,9 @@ class MediaProcessor:
             if progress_callback:
                 progress_callback("Starting download...")
 
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            returncode, stdout, stderr = run_cmd_safe(cmd)
 
-            stdout, stderr = process.communicate()
-
-            if process.returncode == 0:
+            if returncode == 0:
                 log_upgrade(f"Successfully downloaded video {video_id}")
                 return True
             else:
@@ -69,17 +64,12 @@ class MediaProcessor:
                 url
             ]
 
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            returncode, stdout, stderr = run_cmd_safe(cmd)
 
-            if result.returncode == 0 and video_file.exists():
+            if returncode == 0 and video_file.exists():
                 return video_file
             else:
-                log_upgrade(f"Video download failed: {result.stderr}")
+                log_upgrade(f"Video download failed: {stderr}")
                 return None
 
         except Exception as e:
@@ -101,18 +91,13 @@ class MediaProcessor:
                 frame_pattern
             ]
 
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            returncode, stdout, stderr = run_cmd_safe(cmd)
 
-            if result.returncode == 0:
+            if returncode == 0:
                 log_upgrade(f"Successfully extracted frames to {output_dir}")
                 return True
             else:
-                log_upgrade(f"Frame extraction failed: {result.stderr}")
+                log_upgrade(f"Frame extraction failed: {stderr}")
                 return False
 
         except Exception as e:
@@ -134,18 +119,13 @@ class MediaProcessor:
                 str(audio_path)
             ]
 
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            returncode, stdout, stderr = run_cmd_safe(cmd)
 
-            if result.returncode == 0:
+            if returncode == 0:
                 log_upgrade(f"Successfully extracted audio to {audio_path}")
                 return True
             else:
-                log_upgrade(f"Audio extraction failed: {result.stderr}")
+                log_upgrade(f"Audio extraction failed: {stderr}")
                 return False
 
         except Exception as e:
@@ -265,7 +245,17 @@ class MediaProcessor:
             else:
                 safe_chars.append('_')
 
-        safe_name = ''.join(safe_chars).strip()
+        # Use safe_strip on the input text before processing
+        processed_text = safe_strip(text)
+
+        safe_chars = []
+        for char in processed_text:
+            if char.isalnum() or char in (' ', '-', '_'):
+                safe_chars.append(char)
+            else:
+                safe_chars.append('_')
+
+        safe_name = ''.join(safe_chars)
 
         # Limit length
         if len(safe_name) > max_length:
