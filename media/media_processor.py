@@ -132,6 +132,45 @@ class MediaProcessor:
             log_upgrade(f"Error extracting audio: {e}")
             return False
 
+    def normalize_audio(self, input_path: Path) -> Optional[Path]:
+        """
+        Normalizes an audio file to 16kHz mono for Whisper.
+        Returns the path to the new, normalized file on success.
+        """
+        try:
+            if not input_path.exists():
+                log_upgrade(f"Cannot normalize, input file not found: {input_path}")
+                return None
+
+            # Create a new path for the normalized file
+            output_path = input_path.with_name(f"{input_path.stem}_16k_mono.m4a")
+
+            log_upgrade(f"Normalizing '{input_path}' to '{output_path}'...")
+
+            cmd = [
+                FFMPEG_PATH,
+                '-y',  # Overwrite output files
+                '-i', str(input_path),
+                '-ac', '1',  # Mono audio
+                '-ar', '16000',  # 16kHz sample rate
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                str(output_path)
+            ]
+
+            returncode, stdout, stderr = run_cmd_safe(cmd)
+
+            if returncode == 0:
+                log_upgrade(f"Successfully normalized audio to {output_path}")
+                return output_path
+            else:
+                log_upgrade(f"Audio normalization failed for {input_path}: {stderr}")
+                return None
+
+        except Exception as e:
+            log_upgrade(f"Error normalizing audio: {e}")
+            return None
+
     def download_audio(self,
                        url: str,
                        output_path: Path,

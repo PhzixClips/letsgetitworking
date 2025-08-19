@@ -1269,7 +1269,7 @@ class MainWindow:
         }
 
         # --- Execute download in a thread ---
-        self._set_status_message(f"Starting audio download for '{title[:30]}...'", None)
+        show_toast(self.root, f"No audio found; re-extracting for '{title[:20]}...'", "info")
 
         def _download_task():
             from config import AUDIO_CLIPS_PATH
@@ -1287,19 +1287,21 @@ class MainWindow:
         """Callback that runs on the UI thread after audio download attempt."""
         if result.success and result.filepath:
             self.logger.info(f"Audio download successful: {result.filepath}")
-            self._set_status_message("Audio download complete. Starting transcription...", None)
+            show_toast(self.root, "Audio download complete. Starting transcription...", "success")
 
             # --- Nice-to-have: Attach path to row data ---
-            self.tab_manager.update_video_data(video_data['video_id'], {'audio_path': str(result.filepath)})
+            video_id = video_data.get('video_id')
+            self.tab_manager.update_video_data(video_id, {'audio_path': str(result.filepath)})
+            self.logger.debug(f"FB: captured audio path for transcription: {result.filepath} for video_id {video_id}")
 
             self._execute_transcription(result.filepath, video_data)
         else:
             self.logger.error(f"Audio download failed: {result.error}")
             self._clear_status_message()
-            messagebox.showerror('Download Error', f"Failed to download audio for transcription.\n\nError: {result.error}")
+            show_toast(self.root, "FB transcription failed. Check if video is private or update yt-dlp.", "error")
 
     def _execute_transcription(self, audio_path: Path, video_data: dict):
-        """Handles the transcription process itself."""
+        """Handles the audio normalization and transcription process."""
         video_id = video_data.get('video_id')
         title = video_data.get('title', 'Unknown')
 
@@ -1308,12 +1310,34 @@ class MainWindow:
 
         def _transcribe_task():
             try:
-                transcript = self.media_processor.transcribe_audio(audio_path, progress_callback)
+                # --- Step 1: Normalize audio ---
+                progress_callback("Normalizing audio for transcription...")
+                normalized_path = self.media_processor.normalize_audio(audio_path)
+
+                if not normalized_path:
+                    self.ui_call(progress.close)
+                    self.ui_call(show_toast, self.root, "Audio normalization failed. Check logs.", "error")
+                    return
+
+                # --- Step 2: Transcribe the normalized audio ---
+                transcript = self.media_processor.transcribe_audio(normalized_path, progress_callback)
                 self.ui_call(progress.close)
+
                 if transcript:
+                    # --- Step 3: Update UI data with new path and clean up ---
+                    self.ui_call(self.tab_manager.update_video_data, video_id, {'audio_path': str(normalized_path)})
+                    try:
+                        # Clean up the original, non-normalized file
+                        if audio_path != normalized_path:
+                            os.remove(audio_path)
+                            self.logger.info(f"Cleaned up original audio file: {audio_path}")
+                    except OSError as e:
+                        self.logger.warning(f"Failed to clean up original audio file: {e}")
+
                     self.ui_call(self._on_transcription_complete, transcript, video_id, title)
                 else:
-                    self.ui_call(messagebox.showerror, 'Error', 'Failed to transcribe audio.')
+                    self.ui_call(show_toast, self.root, "Failed to transcribe audio.", "error")
+
             except Exception as e:
                 self.logger.error(f'Transcription execution error: {e}')
                 self.ui_call(progress.close)
