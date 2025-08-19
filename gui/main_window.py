@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 import os
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import webview
@@ -26,10 +27,9 @@ from media.media_processor import MediaProcessor
 from analysis.video_analyzer import VideoAnalyzer
 from gui.tab_manager import TabManager
 import webbrowser
-import webbrowser
 from integrations.facebook_extractor import is_facebook_url, download_facebook_video, normalize_facebook_url
 from integrations.facebook_helper import canonicalize_facebook_url
-from core.yt_dlp_helper import run_metadata_dump, update_yt_dlp
+from core.yt_dlp_helper import run_metadata_dump, update_yt_dlp, update_yt_dlp_module
 from gui.components import (
     ProgressDialog, CaptionDialog, TimerWidget, show_toast, ManualTranscriptDialog, FolderManagerDialog
 )
@@ -75,6 +75,8 @@ class MainWindow:
         # Search state
         self.current_search_active = False
         self.yt_dlp_updated_this_session = False
+        self.session_flags = {'tried_module': False, 'tried_nightly': False}
+
 
         # --- Widget references for dynamic updates ---
         self.url_label = None
@@ -1239,36 +1241,19 @@ class MainWindow:
 
         # --- Prepare for download ---
         platform = video.get('platform', 'YouTube')
+        if platform == 'Facebook':
+            # Use the new robust download task for Facebook
+            task = FacebookDownloadTask(self, video)
+            threading.Thread(target=task.run, daemon=True).start()
+            return
+
+        # --- Original simple flow for YouTube ---
         video_id = video.get('video_id')
         title = video.get('title', 'Unknown')
         url = video.get('webpage_url')
         if not url:
-            if platform == 'YouTube':
-                url = f'https://www.youtube.com/watch?v={video_id}'
-            else:
-                messagebox.showerror('Error', 'No URL found for this item.')
-                return
+            url = f'https://www.youtube.com/watch?v={video_id}'
 
-        cookies_path = self.facebook_cookies_path_var.get() if self.use_facebook_cookies_var.get() and platform == 'Facebook' else None
-
-        # --- Define UI Callbacks for the downloader ---
-        def on_ffmpeg_missing():
-            self.ui_call(messagebox.showerror, "FFmpeg Not Found", "ffmpeg could not be found. Please set the correct path in Settings.")
-            self.ui_call(self._open_settings)
-
-        def on_login_required():
-            self.ui_call(messagebox.showinfo, "Login Required", "This content is private. Please provide a valid cookies.txt file for Facebook and try again.")
-            # We don't automatically retry here, user should check cookies and click again.
-
-        ui_callbacks = {
-            'on_fallback': lambda msg: self.ui_call(self._set_status_message, msg, None),
-            'on_ffmpeg_missing': on_ffmpeg_missing,
-            'on_login_required': on_login_required,
-            'on_update_start': lambda: self.ui_call(self._set_status_message, "yt-dlp extractor error, attempting update...", None),
-            'on_update_complete': lambda: self.ui_call(self._set_status_message, "yt-dlp updated, retrying download...", None),
-        }
-
-        # --- Execute download in a thread ---
         show_toast(self.root, f"No audio found; re-extracting for '{title[:20]}...'", "info")
 
         def _download_task():
@@ -1276,32 +1261,30 @@ class MainWindow:
             download_result = self.media_processor.download_audio(
                 url=url,
                 video_id=video_id,
-                output_path=AUDIO_CLIPS_PATH,
-                cookies_path=cookies_path,
-                ui_callbacks=ui_callbacks
+                output_path=AUDIO_CLIPS_PATH
             )
             self.ui_call(self._on_audio_download_complete, download_result, video)
 
         threading.Thread(target=_download_task, daemon=True).start()
 
-    def _on_audio_download_complete(self, result, video_data):
+    def _on_audio_download_complete(self, result, video_data, engine_used=None):
         """Callback that runs on the UI thread after audio download attempt."""
         if result.success and result.filepath:
             self.logger.info(f"Audio download successful: {result.filepath}")
             show_toast(self.root, "Audio download complete. Starting transcription...", "success")
 
-            # --- Nice-to-have: Attach path to row data ---
             video_id = video_data.get('video_id')
-            self.tab_manager.update_video_data(video_id, {'audio_path': str(result.filepath)})
+            update_data = {'audio_path': str(result.filepath)}
+            if engine_used:
+                update_data['engine'] = engine_used
+            self.tab_manager.update_video_data(video_id, update_data)
             self.logger.debug(f"FB: captured audio path for transcription: {result.filepath} for video_id {video_id}")
 
-            # Update debugging info in settings
             settings_manager.set('last_resolved_audio_path', str(result.filepath))
 
             self._execute_transcription(result.filepath, video_data)
         else:
             self.logger.error(f"Audio download failed: {result.error}")
-            self._clear_status_message()
             show_toast(self.root, "FB transcription failed. Check if video is private or update yt-dlp.", "error")
 
     def _execute_transcription(self, audio_path: Path, video_data: dict):
@@ -1314,7 +1297,6 @@ class MainWindow:
 
         def _transcribe_task():
             try:
-                # --- Step 1: Normalize audio ---
                 progress_callback("Normalizing audio for transcription...")
                 normalized_path = self.media_processor.normalize_audio(audio_path)
 
@@ -1323,15 +1305,12 @@ class MainWindow:
                     self.ui_call(show_toast, self.root, "Audio normalization failed. Check logs.", "error")
                     return
 
-                # --- Step 2: Transcribe the normalized audio ---
                 transcript = self.media_processor.transcribe_audio(normalized_path, progress_callback)
                 self.ui_call(progress.close)
 
                 if transcript:
-                    # --- Step 3: Update UI data with new path and clean up ---
                     self.ui_call(self.tab_manager.update_video_data, video_id, {'audio_path': str(normalized_path)})
                     try:
-                        # Clean up the original, non-normalized file
                         if audio_path != normalized_path:
                             os.remove(audio_path)
                             self.logger.info(f"Cleaned up original audio file: {audio_path}")
@@ -1433,10 +1412,6 @@ class MainWindow:
             messagebox.showinfo("Not Found", "No transcripts were found for the selected videos.", parent=self.root)
             return
 
-        # This is a simplified way to open the prompt builder.
-        # In a real app, you might want to pass the text to an existing instance.
-        # Here, we open a new dialog with the combined text.
-        # We need a representative title and video_id for the dialog constructor.
         first_video_id = video_ids[0]
         first_video_data = self.winners_manager.get_winner_by_id(first_video_id)
         title = f"Combined {len(video_ids)} transcripts"
@@ -1486,16 +1461,11 @@ class MainWindow:
         """Downloads a transcript in a background thread using the new robust downloader."""
         self.logger.info(f"Starting async transcript download for {video_id}")
 
-        # This task runs in the background, so we don't have interactive UI.
-        # We assume it's a YouTube URL for now as this is the original context.
-        # For Facebook, a similar async download could be triggered, but would
-        # need to handle cookies non-interactively (e.g. they must already be set).
         url = f'https://www.youtube.com/watch?v={video_id}'
 
         def _task():
             try:
                 from config import AUDIO_CLIPS_PATH
-                # We don't provide UI callbacks as this is a background task
                 result = self.media_processor.download_audio(url, video_id, AUDIO_CLIPS_PATH)
 
                 if not result.success or not result.filepath:
@@ -1545,45 +1515,20 @@ class MainWindow:
             data = dialog.result
             video_id = f"manual_{uuid.uuid4()}"
 
-            # Create a dummy winner object
             winner_data = {
-                "video_id": video_id,
-                "title": data["title"],
-                "display_title": data["title"],
-                "notes": data["notes"],
-                "tags": data["tags"],
-                "folder": data["folder"],
-                "has_transcript": True,
-                # Add default values for other required fields
-                "viral_score": 0.0,
-                "views": 0,
-                "likes": 0,
-                "ratio": 0.0,
-                "vph": 0.0,
-                "duration": "00:00:00",
-                "age": "",
-                "repost_flag": False,
-                "repost_reason": "",
+                "video_id": video_id, "title": data["title"], "display_title": data["title"],
+                "notes": data["notes"], "tags": data["tags"], "folder": data["folder"], "has_transcript": True,
+                "viral_score": 0.0, "views": 0, "likes": 0, "ratio": 0.0, "vph": 0.0,
+                "duration": "00:00:00", "age": "", "repost_flag": False, "repost_reason": "",
             }
             self.winners_manager.add_winner(winner_data, data["folder"], notes=data["notes"])
 
-            # Create and save the transcript record
             transcript_record = {
-                "video_id": video_id,
-                "title": data["title"],
-                "source_url": "",
-                "channel_title": "Manual Entry",
-                "saved_at": datetime.now(timezone.utc).isoformat(),
-                "language": "en",
-                "duration": "00:00:00",
-                "tags": data["tags"],
-                "folder": data["folder"],
-                "notes": data["notes"],
-                "text": data["text"],
+                "video_id": video_id, "title": data["title"], "source_url": "", "channel_title": "Manual Entry",
+                "saved_at": datetime.now(timezone.utc).isoformat(), "language": "en", "duration": "00:00:00",
+                "tags": data["tags"], "folder": data["folder"], "notes": data["notes"], "text": data["text"],
             }
             self.transcripts_manager.save(transcript_record)
-
-            # Refresh the library view
             self._load_winners_to_tab()
 
     def _delete_selected_winners(self):
@@ -1620,150 +1565,148 @@ class MainWindow:
         FolderManagerDialog(self.root, self.winners_manager)
         self.tab_manager.update_folder_filter()
 
-    def _show_facebook_error_modal(self, url: str):
-        """Shows a friendly modal when Facebook extraction fails definitively."""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Facebook Extraction Failed")
-        dialog.geometry("450x200")
-        dialog.configure(bg=COLORS.get('bg_primary'))
-        dialog.transient(self.root)
-        dialog.grab_set()
+    def _show_final_fb_error_dialog(self, url: str):
+        """Shows the new, more helpful error dialog when all FB retries fail."""
 
-        main_frame = tk.Frame(dialog, bg=COLORS.get('bg_primary'), padx=15, pady=15)
-        main_frame.pack(fill='both', expand=True)
+        def on_retry_with_cookies():
+            # This is a bit of a hack, but it re-triggers the analysis flow
+            # which will now use the new cookie settings.
+            self.logger.info("User requested retry with browser cookies from error dialog.")
+            settings_manager.set('cookies_from_browser', 'edge') # default to edge, user can change
+            self._perform_facebook_analysis(url)
 
-        tk.Label(main_frame, text="Facebook changed their API and yt-dlp hasn't shipped a fix yet.",
-                  fg=COLORS.get('fg_primary'), bg=COLORS.get('bg_primary')).pack(pady=5)
+        def on_update_module():
+            self.logger.info("User requested module update from error dialog.")
+            # This should be a non-blocking task with UI feedback
+            def _task():
+                result = update_yt_dlp_module(force_master=True)
+                if result.success:
+                    self.ui_call(show_toast, self.root, "Module updated to master. Please try again.", "success")
+                else:
+                    self.ui_call(show_toast, self.root, f"Module update failed: {result.message}", "error")
+            threading.Thread(target=_task, daemon=True).start()
 
-        version = settings_manager.get('yt_dlp_current_version', 'N/A')
-        last_update = settings_manager.get('yt_dlp_last_update_check', 'Never')
-        if last_update != 'Never':
-            try:
-                last_update = datetime.fromisoformat(last_update).strftime('%Y-%m-%d %H:%M')
-            except:
-                pass # keep as is
-
-        tk.Label(main_frame, text=f"yt-dlp version: {version} (Last check: {last_update})",
-                  fg=COLORS.get('fg_secondary'), bg=COLORS.get('bg_primary')).pack(pady=5)
-
-        button_frame = tk.Frame(main_frame, bg=COLORS.get('bg_primary'))
-        button_frame.pack(pady=15)
-
-        def _open_and_close():
-            webbrowser.open(url)
-            dialog.destroy()
-
-        def _update_and_close():
-            self._perform_facebook_analysis(url) # Re-trigger the whole flow
-            dialog.destroy()
-
-        def _learn_more():
-            webbrowser.open("https://github.com/yt-dlp/yt-dlp/issues?q=is%3Aissue+is%3Aopen+facebook")
-            dialog.destroy()
-
-        ttk.Button(button_frame, text="Open in Browser", command=_open_and_close).pack(side='left', padx=5)
-        ttk.Button(button_frame, text="Update yt-dlp & Retry", command=_update_and_close).pack(side='left', padx=5)
-        ttk.Button(button_frame, text="Learn More", command=_learn_more).pack(side='left', padx=5)
+        FacebookErrorDialog(self.root, url, on_retry_with_cookies, on_update_module)
 
 
-class FacebookAnalysisTask:
-    """
-    Manages the complex, multi-step process of analyzing a Facebook URL,
-    including retries, updates, and user prompts.
-    """
-    def __init__(self, main_window: 'MainWindow', url: str):
+MOBILE_USER_AGENT = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+
+class FacebookTaskBase:
+    """Base class for managing complex, multi-step FB operations."""
+    def __init__(self, main_window: 'MainWindow', video_data: dict, on_complete: callable):
         self.main = main_window
+        self.video_data = video_data
+        self.on_complete = on_complete
         self.logger = main_window.logger
-        self.original_url = url
-        self.tab_id = main_window.tab_manager.get_active_tab_id()
+        self.original_url = video_data.get('webpage_url')
+        self.video_id = video_data.get('video_id')
+        self.session_flags = main_window.session_flags
 
     def run(self):
-        """Executes the analysis task. Designed to be run in a thread."""
-        self.logger.info(f"Starting Facebook analysis for URL: {self.original_url}")
+        """Executes the task. Designed to be run in a thread."""
+        self.logger.info(f"Starting Facebook task for URL: {self.original_url}")
 
-        # Attempt 1: Try the original URL
-        result = self._try_extraction(self.original_url)
+        final_result = None
 
-        if result.success:
-            self.logger.debug("FB analysis completed in worker; dispatching to UI thread")
-            self.main.ui_call(self.main._finish_facebook_analysis, result.data)
-            return
+        for engine in ['exe', 'module']:
+            if engine == 'module' and self.session_flags['tried_module']:
+                continue
 
-        # Check for specific extractor errors
-        error_str = safe_strip(result.error).lower()
-        is_extractor_error = "extractorerror" in error_str or "cannot parse data" in error_str
+            if engine == 'module':
+                self.logger.info("Switching to yt-dlp module backend for FB")
+                self.session_flags['tried_module'] = True
+                if settings_manager.get('auto_manage_yt_dlp_module'):
+                    self.main.ui_call(show_toast, self.main.root, "Updating yt-dlp module...", "info")
+                    update_result = update_yt_dlp_module()
+                    if update_result.success:
+                        self.main.ui_call(show_toast, self.main.root, "Module updated. Retrying...", "info")
+                    else:
+                        self.logger.warning(f"yt-dlp module update failed: {update_result.message}")
 
-        if is_extractor_error:
-            self.logger.warning(f"FB extractor error detected: {error_str[:100]}")
+            urls_to_try = self.get_urls_to_try()
 
-            # Attempt 2: Try canonical URLs
-            canonical_url = canonicalize_facebook_url(self.original_url)
-            if canonical_url and canonical_url != self.original_url:
-                self.logger.info(f"Retrying with canonical URL: {canonical_url}")
-                result = self._try_extraction(canonical_url)
+            for url_config in urls_to_try:
+                current_url = url_config['url']
+                if not current_url: continue
+
+                self.main.ui_call(show_toast, self.main.root, f"Trying {current_url[:40]}... (Engine: {engine.upper()})", "info")
+                result = self.execute_yt_dlp(current_url, engine=engine, user_agent=url_config['ua'])
+
                 if result.success:
-                    self.main.ui_call(self.main._finish_facebook_analysis, result.data)
+                    self.logger.debug(f"FB task successful with engine={engine}, url={current_url}")
+                    self.on_complete(result, self.video_data, engine_used=engine)
                     return
 
-            # Attempt 3: Auto-update yt-dlp and retry
-            if settings_manager.get('yt_dlp_auto_update', True) and not self.main.yt_dlp_updated_this_session:
-                self.main.yt_dlp_updated_this_session = True # Prevent multiple updates
-                self.logger.info("Attempting yt-dlp self-update...")
-                self.main.progress_dialog.update_status("FB extractor error, updating yt-dlp...")
+                final_result = result
+                error_str = safe_strip(result.error).lower()
+                if "extractorerror" in error_str or "cannot parse data" in error_str:
+                    self.logger.warning(f"FB extractor error on engine={engine}: {error_str[:100]}")
+                    break
+                if "login required" in error_str or "you must log in" in error_str:
+                    self.logger.info("Login error detected, prompting user for cookies.")
+                    self.main.ui_call(self._prompt_for_cookies)
+                    return
 
-                update_result = update_yt_dlp()
-                self.logger.info(f"yt-dlp update result: success={update_result.success}, updated={update_result.updated}, msg={update_result.message}")
+        self.logger.error(f"All FB attempts failed. Final error: {final_result.error if final_result else 'Unknown'}")
+        self.main.ui_call(self.main._show_final_fb_error_dialog, self.original_url)
+        if final_result:
+             # We still call on_complete to update the UI state to 'error'
+            self.on_complete(final_result, self.video_data)
 
-                if update_result.success and update_result.updated:
-                    self.logger.info("Retrying FB extraction after update...")
-                    self.main.ui_call(self.main.progress_dialog.update_status, "Update complete, retrying extraction...")
-                    result = self._try_extraction(canonical_url or self.original_url)
-                    if result.success:
-                        self.main.ui_call(self.main._finish_facebook_analysis, result.data)
-                        return
+    def get_urls_to_try(self) -> list:
+        return [
+            {'url': self.original_url, 'ua': None},
+            {'url': canonicalize_facebook_url(self.original_url), 'ua': None},
+            {'url': canonicalize_facebook_url(self.original_url, mobile=True), 'ua': MOBILE_USER_AGENT},
+        ]
 
-        # If all else fails, check for login error and prompt or show final error modal
-        error_str = safe_strip(result.error).lower()
-        is_login_error = "login required" in error_str or "you must log in" in error_str
-        if is_login_error:
-            self.logger.info("Login error detected, prompting user for cookies.")
-            self.main.ui_call(self._prompt_for_cookies)
-        else:
-            self.logger.error(f"All FB extraction attempts failed. Final error: {result.error}")
-            self.main.ui_call(self.main._show_facebook_error_modal, self.original_url)
-            # Also update the main UI to show a generic failure
-            self.main.ui_call(self.main._finish_facebook_analysis, {'error': 'final_failure'})
-
-
-    def _try_extraction(self, url: str, use_cookies: bool = False) -> 'ExtractionResult':
-        """A single attempt to extract metadata for a given URL."""
-        cookies_path = self.main.facebook_cookies_path_var.get() if use_cookies else None
-        extra_args = ["--extractor-args", "facebook:lang=en_US"]
-        return run_metadata_dump(url, cookies=cookies_path, extra_args=extra_args)
+    def execute_yt_dlp(self, url: str, engine: str, user_agent: Optional[str]):
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def _prompt_for_cookies(self):
-        """Show a messagebox on the main thread to ask about using cookies."""
         should_retry = messagebox.askyesno(
             "Login Required",
             "This video seems to be private or requires a login.\n\n"
-            "Would you like to retry using your Facebook cookies.txt file?",
+            "Would you like to retry using your Facebook cookies?",
+            detail="Ensure you have selected a browser in Settings or provided a cookies.txt file.",
             parent=self.main.root
         )
         if should_retry:
             self.logger.info("User opted to retry with cookies.")
-            # This needs to run in a new thread
-            threading.Thread(target=self._retry_with_cookies, daemon=True).start()
+            threading.Thread(target=self.run, daemon=True).start()
         else:
-             self.main.ui_call(self.main._finish_facebook_analysis, {'error': 'user_declined_cookies'})
+            self.on_complete(None, self.video_data)
 
+class FacebookAnalysisTask(FacebookTaskBase):
+    def __init__(self, main_window: 'MainWindow', url: str):
+        video_data = {'webpage_url': url, 'video_id': 'analysis_task'}
+        super().__init__(main_window, video_data, main_window._finish_facebook_analysis)
 
-    def _retry_with_cookies(self):
-        """Final attempt to extract metadata using cookies."""
-        url_to_try = canonicalize_facebook_url(self.original_url) or self.original_url
-        result = self._try_extraction(url_to_try, use_cookies=True)
-        if result.success:
-            self.main.ui_call(self.main._finish_facebook_analysis, result.data)
-        else:
-            self.logger.error(f"FB extraction with cookies failed. Final error: {result.error}")
-            self.main.ui_call(self.main._show_facebook_error_modal, self.original_url)
-            self.main.ui_call(self.main._finish_facebook_analysis, {'error': 'cookie_failure'})
+    def execute_yt_dlp(self, url: str, engine: str, user_agent: Optional[str]):
+        cookies_path = self.main.facebook_cookies_path_var.get() if self.main.use_facebook_cookies_var.get() else None
+        extra_args = ["--extractor-args", "facebook:lang=en_US"]
+        if user_agent:
+            extra_args.extend(["--user-agent", user_agent])
+
+        cookies_from_browser = settings_manager.get('cookies_from_browser', 'none')
+        if cookies_from_browser != 'none':
+            extra_args.extend(['--cookies-from-browser', cookies_from_browser])
+            self.main.ui_call(self.main.progress_dialog.update_status, f"Using cookies from {cookies_from_browser}...")
+
+        return run_metadata_dump(url, cookies=cookies_path, extra_args=extra_args, engine=engine)
+
+class FacebookDownloadTask(FacebookTaskBase):
+    def __init__(self, main_window: 'MainWindow', video_data: dict):
+        super().__init__(main_window, video_data, main_window._on_audio_download_complete)
+
+    def execute_yt_dlp(self, url: str, engine: str, user_agent: Optional[str]):
+        from config import AUDIO_CLIPS_PATH
+        return self.main.media_processor.download_audio(
+            url=url,
+            video_id=self.video_id,
+            output_path=AUDIO_CLIPS_PATH,
+            engine=engine,
+            user_agent=user_agent,
+            cookies_path=self.main.facebook_cookies_path_var.get() if self.main.use_facebook_cookies_var.get() else None,
+            cookies_from_browser=settings_manager.get('cookies_from_browser', 'none')
+        )

@@ -7,7 +7,8 @@ Provides a user interface for modifying application settings.
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from data.settings_manager import settings_manager
-from core.yt_dlp_helper import get_yt_dlp_version, update_yt_dlp
+from core.yt_dlp_helper import get_yt_dlp_version, update_yt_dlp, get_yt_dlp_module_version, update_yt_dlp_module
+from core.updater import update_yt_dlp_exe_nightly
 import threading
 from datetime import datetime
 
@@ -99,26 +100,27 @@ class SettingsWindow(tk.Toplevel):
     def _create_paths_tab(self, parent):
         frame = ttk.Frame(parent, padding=10)
         frame.columnconfigure(1, weight=1)
+        row = 0
 
-        self.vars['api_keys'] = tk.StringVar()
+        # --- API Keys Section ---
+        ttk.Label(frame, text="API Keys (one per line):").grid(row=row, column=0, columnspan=2, sticky='w', pady=5)
+        row += 1
+        api_keys_text = tk.Text(frame, height=5, width=60, bg="#2a2f37", fg="#e6e6e6", insertbackground="#e6e6e6")
+        api_keys_text.grid(row=row, column=0, columnspan=3, sticky='ew', pady=(0, 10))
+        self.api_keys_text = api_keys_text
+        row += 1
+
+        # --- Paths Section ---
+        ttk.Separator(frame, orient='horizontal').grid(row=row, column=0, columnspan=3, sticky='ew', pady=15)
+        row += 1
         self.vars['yt_dlp_path'] = tk.StringVar()
         self.vars['ffmpeg_path'] = tk.StringVar()
         self.vars['cliphustle_base_path'] = tk.StringVar()
-
-        # API Keys
-        ttk.Label(frame, text="API Keys (one per line):").grid(row=0, column=0, columnspan=2, sticky='w', pady=5)
-        api_keys_text = tk.Text(frame, height=5, width=60, bg="#2a2f37", fg="#e6e6e6", insertbackground="#e6e6e6")
-        api_keys_text.grid(row=1, column=0, columnspan=3, sticky='ew', pady=(0, 10))
-        self.api_keys_text = api_keys_text
-
-        # Paths
         paths = [
-            ("yt_dlp_path", "yt-dlp Path", self._browse_file),
+            ("yt_dlp_path", "yt-dlp EXE Path", self._browse_file),
             ("ffmpeg_path", "FFmpeg Path", self._browse_file),
             ("cliphustle_base_path", "ClipHustle Base Path", self._browse_directory),
         ]
-
-        row = 2
         for key, text, command in paths:
             ttk.Label(frame, text=f"{text}:").grid(row=row, column=0, sticky='w', pady=5)
             entry = ttk.Entry(frame, textvariable=self.vars[key])
@@ -126,36 +128,54 @@ class SettingsWindow(tk.Toplevel):
             ttk.Button(frame, text="Browse...", command=lambda k=key: command(k)).grid(row=row, column=2, padx=5)
             row += 1
 
-        # yt-dlp Management Section
+        # --- yt-dlp Management Section ---
         ttk.Separator(frame, orient='horizontal').grid(row=row, column=0, columnspan=3, sticky='ew', pady=15)
         row += 1
+        ttk.Label(frame, text="yt-dlp Management", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, columnspan=2, sticky='w', pady=5)
+        row += 1
 
-        ttk.Label(frame, text="yt-dlp Management", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, sticky='w', pady=5)
+        self.yt_dlp_version_label = ttk.Label(frame, text="Installed EXE version: ...")
+        self.yt_dlp_version_label.grid(row=row, column=0, columnspan=2, sticky='w', pady=2)
+        row += 1
+        self.yt_dlp_module_version_label = ttk.Label(frame, text="Installed Module version: ...")
+        self.yt_dlp_module_version_label.grid(row=row, column=0, columnspan=2, sticky='w', pady=2)
         row += 1
 
         self.vars['yt_dlp_auto_update'] = tk.BooleanVar()
-        ttk.Checkbutton(frame, text="Auto-update yt-dlp on extractor errors (recommended)",
-                        variable=self.vars['yt_dlp_auto_update']).grid(row=row, column=0, columnspan=2, sticky='w', pady=5)
+        ttk.Checkbutton(frame, text="Auto-update yt-dlp EXE on extractor errors", variable=self.vars['yt_dlp_auto_update']).grid(row=row, column=0, columnspan=2, sticky='w', pady=5)
+        row += 1
+        self.vars['auto_manage_yt_dlp_module'] = tk.BooleanVar()
+        ttk.Checkbutton(frame, text="Auto-manage (update) yt-dlp Python module", variable=self.vars['auto_manage_yt_dlp_module']).grid(row=row, column=0, columnspan=2, sticky='w', pady=5)
+        row += 1
+        self.vars['allow_nightly_update'] = tk.BooleanVar()
+        ttk.Checkbutton(frame, text="Allow updating EXE to nightly builds if stable fails", variable=self.vars['allow_nightly_update']).grid(row=row, column=0, columnspan=2, sticky='w', pady=5)
         row += 1
 
-        self.yt_dlp_version_label = ttk.Label(frame, text="Installed yt-dlp version: ...")
-        self.yt_dlp_version_label.grid(row=row, column=0, columnspan=2, sticky='w', pady=2)
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=row, column=0, columnspan=3, pady=10)
+        self.update_button = ttk.Button(button_frame, text="Update EXE (Stable)", command=self._check_for_yt_dlp_updates)
+        self.update_button.pack(side='left', padx=5)
+        ttk.Button(button_frame, text="Update EXE (Nightly)", command=self._update_exe_nightly).pack(side='left', padx=5)
+        ttk.Button(button_frame, text="Update Module", command=self._update_module).pack(side='left', padx=5)
         row += 1
 
-        self.yt_dlp_last_check_label = ttk.Label(frame, text="Last update check: ...")
-        self.yt_dlp_last_check_label.grid(row=row, column=0, columnspan=2, sticky='w', pady=2)
-        row += 1
-
-        self.update_button = ttk.Button(frame, text="Check for Updates", command=self._check_for_yt_dlp_updates)
-        self.update_button.grid(row=row, column=0, pady=10)
-        row += 1
-
+        # --- Cookies Section ---
         ttk.Separator(frame, orient='horizontal').grid(row=row, column=0, columnspan=3, sticky='ew', pady=15)
         row += 1
-
-        ttk.Label(frame, text="Debugging Info", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, sticky='w', pady=5)
+        ttk.Label(frame, text="Cookies", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, columnspan=2, sticky='w', pady=5)
         row += 1
 
+        ttk.Label(frame, text="Cookies from Browser:").grid(row=row, column=0, sticky='w', pady=5)
+        self.vars['cookies_from_browser'] = tk.StringVar()
+        cookie_combo = ttk.Combobox(frame, textvariable=self.vars['cookies_from_browser'], values=["none", "edge", "chrome", "firefox", "opera", "safari"], state="readonly")
+        cookie_combo.grid(row=row, column=1, sticky='w', padx=5)
+        row += 1
+
+        # --- Debugging Section ---
+        ttk.Separator(frame, orient='horizontal').grid(row=row, column=0, columnspan=3, sticky='ew', pady=15)
+        row += 1
+        ttk.Label(frame, text="Debugging Info", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, sticky='w', pady=5)
+        row += 1
         ttk.Label(frame, text="Last Resolved Audio Path:").grid(row=row, column=0, sticky='w', pady=2)
         self.vars['last_resolved_audio_path'] = tk.StringVar()
         entry = ttk.Entry(frame, textvariable=self.vars['last_resolved_audio_path'], state='readonly')
@@ -179,12 +199,43 @@ class SettingsWindow(tk.Toplevel):
 
         if result.success:
             messagebox.showinfo("yt-dlp Update", result.message, parent=self)
-            # Refresh version info after update
             self._update_version_labels()
             settings_manager.set('yt_dlp_last_update_check', datetime.now().isoformat())
-            self.yt_dlp_last_check_label.config(text=f"Last update check: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         else:
             messagebox.showerror("yt-dlp Update Failed", result.message, parent=self)
+
+    def _update_exe_nightly(self):
+        """Handles the 'Update EXE (Nightly)' button click."""
+        if messagebox.askyesno("Confirm Nightly Update", "This will attempt to download the latest unstable nightly build of yt-dlp. Are you sure?", parent=self):
+            self.update_button.config(state='disabled', text="Updating Nightly...")
+
+            def _task():
+                # In a real implementation, this would be a complex, non-blocking task.
+                # For now, we call the placeholder.
+                update_yt_dlp_exe_nightly()
+                self.ui_call(self._on_update_complete, {"success": True, "message": "Nightly update process initiated. Check logs for details."})
+
+            threading.Thread(target=_task, daemon=True).start()
+
+    def _update_module(self, force_master=False):
+        """Handles the 'Update Module' button click."""
+        self.update_button.config(state='disabled', text="Updating Module...")
+
+        def _task():
+            result = update_yt_dlp_module(force_master)
+            self.ui_call(self._on_module_update_complete, result)
+
+        threading.Thread(target=_task, daemon=True).start()
+
+    def _on_module_update_complete(self, result):
+        """Callback executed on the main thread after the module update task finishes."""
+        self.update_button.config(state='normal', text="Update EXE (Stable)")
+
+        if result.success:
+            messagebox.showinfo("yt-dlp Module Update", "Module updated successfully.", parent=self)
+            self._update_version_labels()
+        else:
+            messagebox.showerror("yt-dlp Module Update Failed", result.message, parent=self)
 
     def _create_search_tab(self, parent):
         frame = ttk.Frame(parent, padding=10)
@@ -224,45 +275,42 @@ class SettingsWindow(tk.Toplevel):
         return frame
 
     def _update_version_labels(self):
-        """Fetches and displays the yt-dlp version info."""
+        """Fetches and displays the yt-dlp version info for both EXE and module."""
         def _task():
-            version = get_yt_dlp_version() or "Not found"
-            last_check = self.settings.get('yt_dlp_last_update_check')
+            exe_version = get_yt_dlp_version(engine='exe') or "Not found"
+            module_version = get_yt_dlp_module_version() or "Not found"
 
-            if last_check:
-                try:
-                    last_check_dt = datetime.fromisoformat(last_check)
-                    last_check_str = last_check_dt.strftime('%Y-%m-%d %H:%M')
-                except ValueError:
-                    last_check_str = "Never"
-            else:
-                last_check_str = "Never"
+            def _update_ui():
+                self.yt_dlp_version_label.config(text=f"Installed EXE version: {exe_version}")
+                self.yt_dlp_module_version_label.config(text=f"Installed Module version: {module_version}")
 
-            def _update_labels():
-                self.yt_dlp_version_label.config(text=f"Installed yt-dlp version: {version}")
-                self.yt_dlp_last_check_label.config(text=f"Last update check: {last_check_str}")
-                if version != "Not found":
-                    settings_manager.set('yt_dlp_current_version', version)
+                if exe_version != "Not found":
+                    settings_manager.set('yt_dlp_current_version', exe_version)
+                if module_version != "Not found":
+                    settings_manager.set('yt_dlp_module_version', module_version)
 
-            self.ui_call(_update_labels)
+            self.ui_call(_update_ui)
 
         threading.Thread(target=_task, daemon=True).start()
 
     def _load_settings(self):
-        self._update_version_labels() # Fetch version info
+        self._update_version_labels()
         # Appearance
         self.vars['theme_name'].set(self.settings.get('theme_name'))
         self.vars['ui_scale'].set(self.settings.get('ui_scale'))
-        self.vars['preview_in_webview'].set(self.settings.get('preview_in_webview', True)) # Default to True
+        self.vars['preview_in_webview'].set(self.settings.get('preview_in_webview', True))
         for key, var in self.vars['font_sizes'].items():
             var.set(self.settings.get('font_sizes', {}).get(key))
 
         # Paths & API
-        self.vars['yt_dlp_auto_update'].set(self.settings.get('yt_dlp_auto_update', True))
         self.api_keys_text.insert('1.0', "\n".join(self.settings.get('api_keys', [])))
         self.vars['yt_dlp_path'].set(self.settings.get('yt_dlp_path'))
         self.vars['ffmpeg_path'].set(self.settings.get('ffmpeg_path'))
         self.vars['cliphustle_base_path'].set(self.settings.get('cliphustle_base_path'))
+        self.vars['yt_dlp_auto_update'].set(self.settings.get('yt_dlp_auto_update', True))
+        self.vars['auto_manage_yt_dlp_module'].set(self.settings.get('auto_manage_yt_dlp_module', True))
+        self.vars['allow_nightly_update'].set(self.settings.get('allow_nightly_update', True))
+        self.vars['cookies_from_browser'].set(self.settings.get('cookies_from_browser', 'none'))
         self.vars['last_resolved_audio_path'].set(self.settings.get('last_resolved_audio_path', ''))
 
         # Search & Analysis
@@ -288,12 +336,16 @@ class SettingsWindow(tk.Toplevel):
             settings_manager.set('font_sizes', font_sizes)
 
             # Paths & API
-            settings_manager.set('yt_dlp_auto_update', self.vars['yt_dlp_auto_update'].get())
             api_keys = self.api_keys_text.get('1.0', tk.END).strip().split('\n')
             settings_manager.set('api_keys', [key for key in api_keys if key])
             settings_manager.set('yt_dlp_path', self.vars['yt_dlp_path'].get())
             settings_manager.set('ffmpeg_path', self.vars['ffmpeg_path'].get())
             settings_manager.set('cliphustle_base_path', self.vars['cliphustle_base_path'].get())
+            settings_manager.set('yt_dlp_auto_update', self.vars['yt_dlp_auto_update'].get())
+            settings_manager.set('auto_manage_yt_dlp_module', self.vars['auto_manage_yt_dlp_module'].get())
+            settings_manager.set('allow_nightly_update', self.vars['allow_nightly_update'].get())
+            settings_manager.set('cookies_from_browser', self.vars['cookies_from_browser'].get())
+            # No need to save 'last_resolved_audio_path' as it's for display only
 
             # Search & Analysis
             settings_manager.set('max_api_calls', self.vars['max_api_calls'].get())

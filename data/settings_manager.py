@@ -91,7 +91,13 @@ class SettingsManager:
             "save_last_used_folder": "Default",
 
             # Debugging
-            "last_resolved_audio_path": ""
+            "last_resolved_audio_path": "",
+
+            # Engine & Update Settings
+            "cookies_from_browser": "none", # none, edge, chrome, firefox
+            "auto_manage_yt_dlp_module": True,
+            "allow_nightly_update": True,
+            "yt_dlp_module_version": "N/A"
         }
 
     def load_settings(self):

@@ -4,6 +4,7 @@ A helper module for interacting with the yt-dlp command-line tool.
 
 import json
 import os
+import sys
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
@@ -38,21 +39,47 @@ class ExtractionResult:
     data: Optional[Dict[str, Any]]
     error: Optional[str]
 
-def get_yt_dlp_version() -> Optional[str]:
+def get_yt_dlp_version(engine: str = 'exe') -> Optional[str]:
     """
-    Retrieves the current version of the yt-dlp executable.
+    Retrieves the current version of the yt-dlp executable or module.
     Returns the version string or None if it fails.
     """
-    if not YT_DLP_PATH:
-        return None
+    if engine == 'exe':
+        if not YT_DLP_PATH:
+            return None
+        cmd = [YT_DLP_PATH, "--version"]
+    else: # module
+        cmd = [sys.executable, "-m", "yt_dlp", "--version"]
 
-    returncode, stdout, stderr = run_cmd_safe([YT_DLP_PATH, "--version"])
+    returncode, stdout, stderr = run_cmd_safe(cmd)
 
     if returncode == 0:
         return safe_strip(stdout)
     else:
-        log_upgrade(f"Failed to get yt-dlp version: {stderr}")
+        log_upgrade(f"Failed to get yt-dlp version for engine={engine}: {stderr}")
         return None
+
+def get_yt_dlp_module_version() -> Optional[str]:
+    """Convenience function to get the module version."""
+    return get_yt_dlp_version(engine='module')
+
+def update_yt_dlp_module(force_master: bool = False) -> UpdateResult:
+    """
+    Updates the yt-dlp Python module using pip.
+    """
+    if force_master:
+        log_upgrade("Updating yt-dlp module to master branch...")
+        cmd = [sys.executable, "-m", "pip", "install", "-U", "git+https://github.com/yt-dlp/yt-dlp@master"]
+    else:
+        log_upgrade("Updating yt-dlp module...")
+        cmd = [sys.executable, "-m", "pip", "install", "-U", "yt-dlp"]
+
+    returncode, stdout, stderr = run_cmd_safe(cmd)
+
+    if returncode == 0:
+        return UpdateResult(success=True, updated=True, message=stdout)
+    else:
+        return UpdateResult(success=False, updated=False, message=stderr)
 
 def update_yt_dlp() -> UpdateResult:
     """
@@ -77,20 +104,23 @@ def update_yt_dlp() -> UpdateResult:
         return UpdateResult(success=False, updated=False, message=error_message)
 
 
-def run_metadata_dump(url: str, cookies: Optional[str] = None, extra_args: Optional[List[str]] = None) -> ExtractionResult:
+def run_metadata_dump(url: str, cookies: Optional[str] = None, extra_args: Optional[List[str]] = None, engine: str = 'exe') -> ExtractionResult:
     """
     Runs `yt-dlp --dump-json` for a given URL and returns the parsed data.
     """
-    if not YT_DLP_PATH:
-        return ExtractionResult(success=False, data=None, error="yt-dlp path not configured.")
+    if engine == 'exe':
+        if not YT_DLP_PATH:
+            return ExtractionResult(success=False, data=None, error="yt-dlp path not configured.")
+        command = [YT_DLP_PATH]
+    else:
+        command = [sys.executable, "-m", "yt_dlp"]
 
-    command = [
-        YT_DLP_PATH,
+    command.extend([
         '--dump-json',
         '--no-warnings',
         '--no-call-home',
         '--concurrent-fragments', '4',
-    ]
+    ])
 
     safe_cookies_path = safe_strip(cookies)
     if safe_cookies_path:
@@ -131,6 +161,9 @@ def download_audio_from_url(
     cookies_path: Optional[str],
     outdir: str,
     preferred_ext: str = "m4a",
+    engine: str = 'exe',
+    user_agent: Optional[str] = None,
+    cookies_from_browser: Optional[str] = None,
     ui_callbacks: Optional[Dict[str, callable]] = None
 ) -> DownloadResult:
     """
@@ -138,28 +171,41 @@ def download_audio_from_url(
     Designed to be run in a worker thread.
     """
     logger = log_upgrade
-    logger(f"Audio download start: url={url}, video_id={video_id}")
+    logger(f"Audio download start: url={url}, video_id={video_id}, engine={engine}")
 
     output_template = os.path.join(outdir, "%(id)s__%(title).200s.%(ext)s")
 
-    base_cmd = [
-        YT_DLP_PATH,
+    if engine == 'exe':
+        base_cmd_prefix = [YT_DLP_PATH]
+    else:
+        base_cmd_prefix = [sys.executable, "-m", "yt_dlp"]
+
+    base_cmd_suffix = [
         '--no-playlist', '--no-warnings', '--no-call-home',
         '--restrict-filenames',
         '--no-simulate', '--no-part', '--newline',
+        '--retries', '3', '--fragment-retries', '3',
         '--print', 'after_move:filepath',
         '--print', 'filename',
         '--extractor-args', 'facebook:lang=en_US',
         '-o', output_template
     ]
+    base_cmd = base_cmd_prefix + base_cmd_suffix
+
+    if user_agent:
+        base_cmd.extend(['--user-agent', user_agent])
 
     # --- Attempt A: Native Audio-Only ---
     logger("Attempting audio-only download (Attempt A)")
     cmd_a = base_cmd + ['-f', 'bestaudio/bestaudio*']
 
     safe_cookies_path = safe_strip(cookies_path)
+    safe_cookies_browser = safe_strip(cookies_from_browser)
     if safe_cookies_path:
         cmd_a.extend(['--cookies', safe_cookies_path])
+    elif safe_cookies_browser and safe_cookies_browser != 'none':
+        cmd_a.extend(['--cookies-from-browser', safe_cookies_browser])
+
     cmd_a.append(url)
 
     rc_a, stdout_a, stderr_a = run_cmd_safe(cmd_a)
@@ -179,7 +225,6 @@ def download_audio_from_url(
         if ui_callbacks and 'on_fallback':
             ui_callbacks['on_fallback']("FB: no audio-only stream; downloading muxed and extracting audio…")
 
-        # --- Attempt B: Muxed Fallback + Post-processing ---
         if not is_ffmpeg_available():
             logger("ffmpeg not found, aborting download.")
             if ui_callbacks and 'on_ffmpeg_missing':
@@ -189,12 +234,14 @@ def download_audio_from_url(
         logger("Attempting muxed download with audio extraction (Attempt B)")
         cmd_b = base_cmd + [
             '-f', 'best/best*',
-            '--retries', '3', '--fragment-retries', '3',
             '--postprocessor-args', 'ExtractAudio:-vn',
             '--extract-audio', '--audio-format', preferred_ext, '--audio-quality', '0',
         ]
         if safe_cookies_path:
             cmd_b.extend(['--cookies', safe_cookies_path])
+        elif safe_cookies_browser and safe_cookies_browser != 'none':
+            cmd_b.extend(['--cookies-from-browser', safe_cookies_browser])
+
         cmd_b.append(url)
 
         rc_b, stdout_b, stderr_b = run_cmd_safe(cmd_b)
@@ -208,52 +255,8 @@ def download_audio_from_url(
                 logger(f"Extraction (B) seemed to succeed but could not find file from output: {stdout_b}")
                 return DownloadResult(success=False, filepath=None, error="Extraction successful, but could not locate the output file.")
 
-        # --- Attempt C: Canonicalization Retry ---
-        else:
-            logger(f"Attempt B failed. Stderr: {stderr_b}")
-            canonical_url = canonicalize_facebook_url(url)
-            if canonical_url and canonical_url != url:
-                logger(f"Attempting canonical URL retry (Attempt C) with: {canonical_url}")
-                cmd_b[-1] = canonical_url
-                rc_c, stdout_c, stderr_c = run_cmd_safe(cmd_b)
-                if rc_c == 0:
-                    final_path_str = resolve_final_output_path(stdout_c, outdir, video_id)
-                    if final_path_str:
-                        logger(f"Successfully downloaded on canonical URL retry: {final_path_str}")
-                        return DownloadResult(success=True, filepath=Path(final_path_str), error=None)
-                    else:
-                        logger(f"Canonical retry (C) seemed to succeed but could not find file from output: {stdout_c}")
-                        return DownloadResult(success=False, filepath=None, error="Canonical retry successful, but could not locate the output file.")
-                else:
-                    logger(f"Canonical URL retry failed. Final error: {stderr_c}")
-                    return DownloadResult(success=False, filepath=None, error=stderr_c)
-
-            return DownloadResult(success=False, filepath=None, error=stderr_b)
+        return DownloadResult(success=False, filepath=None, error=stderr_b)
 
     # --- Handle other errors from Attempt A ---
-    if "login required" in stderr_a.lower() or "you must log in" in stderr_a.lower():
-        logger("FB: login required")
-        if ui_callbacks and 'on_login_required':
-            ui_callbacks['on_login_required']()
-        return DownloadResult(success=False, filepath=None, error="Login required. Please provide cookies.txt and retry.")
-
-    if "cannot parse data" in stderr_a.lower() or "extractorerror" in stderr_a.lower():
-        logger("FB: Extractor error, attempting auto-update.")
-        if ui_callbacks and 'on_update_start':
-            ui_callbacks['on_update_start']()
-
-        update_result = update_yt_dlp()
-        logger(f"yt-dlp update result: {update_result.message}")
-
-        if update_result.success and update_result.updated:
-            if ui_callbacks and 'on_update_complete':
-                ui_callbacks['on_update_complete']()
-            logger("Retrying download after update.")
-            return download_audio_from_url(url, video_id, cookies_path=cookies_path, outdir=outdir, preferred_ext=preferred_ext, ui_callbacks=ui_callbacks)
-        else:
-            short_err = f"Extractor error and update failed or was not available. Original error: {stderr_a}"
-            logger(short_err)
-            return DownloadResult(success=False, filepath=None, error=short_err)
-
-    logger(f"FB audio download failed: {stderr_a}")
+    # These are returned directly to the controller (e.g. FacebookAnalysisTask) to handle
     return DownloadResult(success=False, filepath=None, error=stderr_a)

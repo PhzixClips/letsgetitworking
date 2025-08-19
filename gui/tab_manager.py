@@ -340,13 +340,13 @@ class TabManager:
         return tab_id
 
     def _create_tab_treeview(self) -> ttk.Treeview:
-        columns = ('Title', 'Score', 'Views', 'Likes', 'L/V Ratio', 'VPH', 'Duration', 'Age', 'video_id')
-        display_columns = ('Title', 'Score', 'Views', 'Likes', 'L/V Ratio', 'VPH', 'Duration', 'Age')
+        columns = ('Engine', 'Title', 'Score', 'Views', 'Likes', 'L/V Ratio', 'VPH', 'Duration', 'Age', 'video_id')
+        display_columns = ('Engine', 'Title', 'Score', 'Views', 'Likes', 'L/V Ratio', 'VPH', 'Duration', 'Age')
 
         tree = ttk.Treeview(self.parent, columns=columns, show='headings', displaycolumns=display_columns)
 
         column_widths = {
-            'Title': 300, 'Score': 80, 'Views': 80, 'Likes': 80,
+            'Engine': 40, 'Title': 300, 'Score': 80, 'Views': 80, 'Likes': 80,
             'L/V Ratio': 80, 'VPH': 80, 'Duration': 80, 'Age': 80
         }
 
@@ -645,6 +645,7 @@ class TabManager:
         ratio_display = _format_percentage(video_data.get('ratio'), 1)
 
         item_id = tab_data.tree.insert('', 'end', values=(
+            video_data.get('engine', ''),
             title_display,
             score_display,
             video_data.get('views', 0),
@@ -737,13 +738,19 @@ class TabManager:
         return None
 
     def update_video_data(self, video_id: str, new_data: dict):
-        """Finds a video by its ID across all tabs and updates its data."""
+        """Finds a video by its ID across all tabs and updates its data and UI."""
         for tab in self.tabs.values():
             for video in tab.results:
                 if video.get('video_id') == video_id:
                     video.update(new_data)
-                    # No need to update the treeview if the changed data is not visible
-                    return # Stop after finding and updating
+
+                    # Update the UI Treeview
+                    for item_id in tab.tree.get_children():
+                        if tab.tree.set(item_id, 'video_id') == video_id:
+                            if 'engine' in new_data:
+                                tab.tree.set(item_id, 'Engine', new_data['engine'].upper())
+                            # Add other UI updates here if needed in the future
+                    return
 
     def update_folder_filter(self):
         """Updates the folder filter dropdown with the current folders."""

@@ -177,6 +177,9 @@ class MediaProcessor:
                        output_path: Path,
                        *,
                        cookies_path: Optional[str] = None,
+                       cookies_from_browser: Optional[str] = None,
+                       engine: str = 'exe',
+                       user_agent: Optional[str] = None,
                        ui_callbacks: Optional[Dict[str, callable]] = None) -> DownloadResult:
         """
         Downloads audio from a URL using the centralized yt-dlp helper.
@@ -191,8 +194,11 @@ class MediaProcessor:
                 url=url,
                 video_id=video_id,
                 cookies_path=cookies_path,
+                cookies_from_browser=cookies_from_browser,
                 outdir=str(output_path),
                 preferred_ext=preferred_ext,
+                engine=engine,
+                user_agent=user_agent,
                 ui_callbacks=ui_callbacks
             )
 

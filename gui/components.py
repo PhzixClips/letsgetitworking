@@ -1255,3 +1255,49 @@ class TimerWidget:
         if self.timer_job:
             self.parent.after_cancel(self.timer_job)
             self.timer_job = None
+
+
+class FacebookErrorDialog(tk.Toplevel):
+    def __init__(self, parent, url: str, on_retry_cookies: callable, on_update_module: callable):
+        super().__init__(parent)
+        self.title("Facebook Extraction Failed")
+        self.geometry("500x250")
+        try:
+            install_style(self)
+        except Exception:
+            self.configure(bg=PALETTE['bg'])
+
+        self.transient(parent)
+        self.grab_set()
+
+        self.url = url
+        self.on_retry_cookies = on_retry_cookies
+        self.on_update_module = on_update_module
+
+        main_frame = ttk.Frame(self, padding=15)
+        main_frame.pack(fill='both', expand=True)
+
+        ttk.Label(main_frame, text="Facebook Extraction Is Unstable", font=("Segoe UI", 12, "bold")).pack(pady=5)
+
+        body_text = "We tried several methods but could not get the video data. This can happen if the video is private, requires a login, or if Facebook changed their API.\n\nYou can try the following options:"
+        ttk.Label(main_frame, text=body_text, wraplength=450).pack(pady=10)
+
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=15)
+
+        ttk.Button(button_frame, text="Retry with Browser Cookies", command=self._retry_with_cookies).pack(side='left', padx=5)
+        ttk.Button(button_frame, text="Update Module to Master", command=self._update_module).pack(side='left', padx=5)
+        ttk.Button(button_frame, text="Open in Browser", command=self._open_in_browser).pack(side='left', padx=5)
+
+    def _retry_with_cookies(self):
+        self.on_retry_cookies()
+        self.destroy()
+
+    def _update_module(self):
+        self.on_update_module()
+        self.destroy()
+
+    def _open_in_browser(self):
+        import webbrowser
+        webbrowser.open(self.url)
+        self.destroy()
